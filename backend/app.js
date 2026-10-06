@@ -9,9 +9,13 @@ const sequelize =
 
 const User =
     require("./models/User");
+const ChatMessage =
+    require("./models/ChatMessage");
 
 const userRoutes =
     require("./routes/userRoutes");
+const messageRoutes =
+    require("./routes/messageRoutes");
 
 const app = express();
 
@@ -48,6 +52,11 @@ app.get("/", (req, res) => {
 app.use(
     "/user",
     userRoutes
+);
+
+app.use(
+    "/message",
+    messageRoutes
 );
 
 // Start server
