@@ -2,57 +2,37 @@ const API_URL = "http://localhost:3000";
 const POLL_INTERVAL = 2000;
 
 const token = localStorage.getItem("token");
-const storedUser = JSON.parse(localStorage.getItem("user") || "null");
 
-if (!token || !storedUser) {
+if (!token) {
   window.location.href = "./login.html";
   throw new Error("User is not logged in");
 }
 
 const myName = document.getElementById("myName");
+const myEmail = document.getElementById("myEmail");
 const myAvatar = document.getElementById("myAvatar");
 const contactName = document.getElementById("contactName");
 const contactAvatar = document.getElementById("contactAvatar");
+const contactStatus = document.getElementById("contactStatus");
 const messageArea = document.getElementById("messageArea");
 const messageForm = document.getElementById("messageForm");
 const messageInput = document.getElementById("messageInput");
 const logoutButton = document.getElementById("logoutButton");
 const chatSearch = document.getElementById("chatSearch");
+const chatList = document.getElementById("chatList");
+
+let loggedInUser = null;
+let allMessages = [];
+let selectedUserId = null;
+let lastRenderedSignature = "";
+let isFirstMessageLoad = true;
 
 const initials = (name) => name?.trim().charAt(0).toUpperCase() || "U";
 
-myName.textContent = storedUser.name || "My Account";
-myAvatar.textContent = initials(storedUser.name);
-
-const scrollToBottom = () => {
-  messageArea.scrollTop = messageArea.scrollHeight;
-};
-
-const formatTime = (dateValue) => new Date(dateValue).toLocaleTimeString([], {
-  hour: "numeric",
-  minute: "2-digit"
-});
-
-const createMessageElement = (message) => {
-  const isMine = Number(message.senderId) === Number(storedUser.id);
-
-  const wrapper = document.createElement("div");
-  wrapper.className = `message ${isMine ? "sent" : "received"}`;
-  wrapper.dataset.messageId = message.id;
-
-  const bubble = document.createElement("div");
-  bubble.className = "bubble";
-  bubble.textContent = message.message;
-
-  const time = document.createElement("time");
-  time.textContent = isMine
-    ? `${formatTime(message.createdAt)} ✓✓`
-    : formatTime(message.createdAt);
-
-  bubble.appendChild(time);
-  wrapper.appendChild(bubble);
-
-  return wrapper;
+const handleUnauthorized = () => {
+  localStorage.removeItem("token");
+  localStorage.removeItem("user");
+  window.location.href = "./login.html";
 };
 
 const showMessageStatus = (text, type = "info") => {
@@ -70,18 +50,24 @@ const showMessageStatus = (text, type = "info") => {
 
   if (text) {
     setTimeout(() => {
-      status.textContent = "";
-    }, 2500);
+      if (status.textContent === text) status.textContent = "";
+    }, 3000);
   }
 };
 
-const handleUnauthorized = () => {
-  localStorage.removeItem("token");
-  localStorage.removeItem("user");
-  window.location.href = "./login.html";
+const formatTime = (dateValue) => {
+  if (!dateValue) return "";
+  return new Date(dateValue).toLocaleTimeString([], {
+    hour: "numeric",
+    minute: "2-digit"
+  });
 };
 
-// Ask the backend who is actually logged in.
+const scrollToBottom = () => {
+  messageArea.scrollTop = messageArea.scrollHeight;
+};
+
+// Ask the backend for the real user represented by the JWT.
 const loadLoggedInUser = async () => {
   const response = await fetch(`${API_URL}/message/me`, {
     headers: {
@@ -100,18 +86,162 @@ const loadLoggedInUser = async () => {
     throw new Error(data.message || "Unable to identify logged-in user");
   }
 
-  // Keep localStorage synchronized with the database user.
-  localStorage.setItem("user", JSON.stringify(data.user));
-  myName.textContent = data.user.name;
-  myAvatar.textContent = initials(data.user.name);
+  loggedInUser = data.user;
+  localStorage.setItem("user", JSON.stringify(loggedInUser));
 
-  return data.user;
+  myName.textContent = loggedInUser.name;
+  myEmail.textContent = loggedInUser.email;
+  myAvatar.textContent = initials(loggedInUser.name);
+
+  console.log("Logged-in user from backend:", loggedInUser);
+
+  return loggedInUser;
 };
 
-let lastRenderedSignature = "";
-let isFirstMessageLoad = true;
+const createMessageElement = (message) => {
+  const isMine = Number(message.senderId) === Number(loggedInUser.id);
 
-// Fetch ALL messages from the database.
+  const wrapper = document.createElement("div");
+  wrapper.className = `message ${isMine ? "sent" : "received"}`;
+  wrapper.dataset.messageId = message.id;
+
+  const bubble = document.createElement("div");
+  bubble.className = "bubble";
+
+  if (!isMine) {
+    const sender = document.createElement("strong");
+    sender.className = "message-sender";
+    sender.textContent = message.senderName || `User ${message.senderId}`;
+    bubble.appendChild(sender);
+  }
+
+  const text = document.createElement("div");
+  text.textContent = message.message;
+  bubble.appendChild(text);
+
+  const time = document.createElement("time");
+  time.textContent = isMine
+    ? `${formatTime(message.createdAt)} ✓✓`
+    : formatTime(message.createdAt);
+  bubble.appendChild(time);
+
+  wrapper.appendChild(bubble);
+  return wrapper;
+};
+
+const renderMessages = () => {
+  const filteredMessages = selectedUserId === null
+    ? allMessages
+    : allMessages.filter((message) => Number(message.senderId) === Number(selectedUserId));
+
+  const wasNearBottom =
+    messageArea.scrollHeight - messageArea.scrollTop - messageArea.clientHeight < 120;
+
+  messageArea.innerHTML = "";
+
+  if (filteredMessages.length === 0) {
+    const emptyState = document.createElement("div");
+    emptyState.className = "empty-chat-state";
+    emptyState.textContent = selectedUserId === null
+      ? "No messages yet. Send your first message!"
+      : "No messages with this user yet.";
+    messageArea.appendChild(emptyState);
+    return;
+  }
+
+  filteredMessages.forEach((message) => {
+    messageArea.appendChild(createMessageElement(message));
+  });
+
+  if (isFirstMessageLoad || wasNearBottom) {
+    scrollToBottom();
+  }
+};
+
+const renderChatList = () => {
+  const users = new Map();
+
+  allMessages.forEach((message) => {
+    const id = Number(message.senderId);
+    if (!users.has(id)) {
+      users.set(id, {
+        id,
+        name: message.senderName || `User ${id}`,
+        lastMessage: message.message,
+        lastTime: message.createdAt
+      });
+    } else {
+      const existing = users.get(id);
+      existing.lastMessage = message.message;
+      existing.lastTime = message.createdAt;
+    }
+  });
+
+  chatList.innerHTML = "";
+
+  // Always show the current user's own chat if they have no messages yet.
+  if (loggedInUser && !users.has(Number(loggedInUser.id))) {
+    users.set(Number(loggedInUser.id), {
+      id: Number(loggedInUser.id),
+      name: loggedInUser.name,
+      lastMessage: "No messages yet",
+      lastTime: null
+    });
+  }
+
+  users.forEach((user) => {
+    const item = document.createElement("button");
+    item.type = "button";
+    item.className = "chat-item";
+    item.dataset.name = user.name;
+    item.dataset.userId = user.id;
+
+    if (selectedUserId !== null && Number(selectedUserId) === Number(user.id)) {
+      item.classList.add("active");
+    }
+
+    const avatar = document.createElement("div");
+    avatar.className = "avatar";
+    avatar.textContent = initials(user.name);
+
+    const content = document.createElement("div");
+    content.className = "chat-item-content";
+
+    const top = document.createElement("div");
+    top.className = "chat-item-top";
+
+    const name = document.createElement("strong");
+    name.textContent = Number(user.id) === Number(loggedInUser.id)
+      ? `${user.name} (You)`
+      : user.name;
+
+    const time = document.createElement("time");
+    time.textContent = user.lastTime ? formatTime(user.lastTime) : "";
+
+    const preview = document.createElement("div");
+    preview.className = "chat-preview";
+    preview.textContent = user.lastMessage;
+
+    top.append(name, time);
+    content.append(top, preview);
+    item.append(avatar, content);
+
+    item.addEventListener("click", () => {
+      selectedUserId = Number(user.id);
+      contactName.textContent = Number(user.id) === Number(loggedInUser.id)
+        ? `${user.name} (You)`
+        : user.name;
+      contactAvatar.textContent = initials(user.name);
+      contactStatus.textContent = `User ID: ${user.id}`;
+      renderChatList();
+      renderMessages();
+    });
+
+    chatList.appendChild(item);
+  });
+};
+
+// Fetch ALL messages from MySQL.
 const loadMessages = async () => {
   try {
     const response = await fetch(`${API_URL}/message/all`, {
@@ -133,37 +263,18 @@ const loadMessages = async () => {
 
     const messages = Array.isArray(data.messages) ? data.messages : [];
     const signature = messages
-      .map((message) => `${message.id}:${message.createdAt}:${message.message}`)
+      .map((message) => `${message.id}:${message.senderId}:${message.createdAt}:${message.message}`)
       .join("|");
 
-    // Do not rebuild the UI when there is no change.
     if (signature === lastRenderedSignature) {
       return;
     }
 
-    const wasNearBottom =
-      messageArea.scrollHeight - messageArea.scrollTop - messageArea.clientHeight < 120;
-
+    allMessages = messages;
     lastRenderedSignature = signature;
-    messageArea.innerHTML = "";
 
-    if (messages.length === 0) {
-      const emptyState = document.createElement("div");
-      emptyState.className = "empty-chat-state";
-      emptyState.textContent = "No messages yet. Send your first message!";
-      messageArea.appendChild(emptyState);
-      return;
-    }
-
-    messages.forEach((message) => {
-      messageArea.appendChild(createMessageElement(message));
-    });
-
-    // Scroll on initial load and when already near the bottom.
-    if (isFirstMessageLoad || wasNearBottom) {
-      scrollToBottom();
-    }
-
+    renderChatList();
+    renderMessages();
     isFirstMessageLoad = false;
   } catch (error) {
     console.error("Load messages error:", error);
@@ -204,10 +315,10 @@ messageForm.addEventListener("submit", async (event) => {
       throw new Error(data.message || "Unable to send message");
     }
 
+    console.log("Message saved by backend:", data.chatMessage);
     messageInput.value = "";
 
-    // Add the saved DB record immediately. The next polling request will
-    // see the same record and will not duplicate it.
+    // Reload from DB immediately. setInterval will continue checking every 2 sec.
     lastRenderedSignature = "";
     await loadMessages();
   } catch (error) {
@@ -218,17 +329,6 @@ messageForm.addEventListener("submit", async (event) => {
     messageInput.disabled = false;
     messageInput.focus();
   }
-});
-
-document.querySelectorAll(".chat-item").forEach((item) => {
-  item.addEventListener("click", () => {
-    document.querySelectorAll(".chat-item").forEach((chat) => chat.classList.remove("active"));
-    item.classList.add("active");
-
-    const name = item.dataset.name;
-    contactName.textContent = name;
-    contactAvatar.textContent = initials(name);
-  });
 });
 
 chatSearch.addEventListener("input", () => {
@@ -244,16 +344,12 @@ logoutButton.addEventListener("click", () => {
   window.location.href = "./login.html";
 });
 
-// Initial user verification + initial messages.
 (async () => {
   try {
-    const user = await loadLoggedInUser();
-    if (!user) return;
-
-    console.log("Logged-in user:", user);
+    await loadLoggedInUser();
     await loadMessages();
 
-    // Check the database every 2 seconds for new messages.
+    // Required polling: check MySQL for new messages every 2 seconds.
     setInterval(loadMessages, POLL_INTERVAL);
   } catch (error) {
     console.error("Chat initialization error:", error);

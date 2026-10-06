@@ -1,7 +1,8 @@
 const ChatMessage = require("../models/ChatMessage");
 const User = require("../models/User");
+const sequelize = require("../config/database");
 
-// Get the currently logged-in user from the database.
+// Get the actual logged-in user from the verified JWT and database.
 const getLoggedInUser = async (req, res) => {
   try {
     const user = await User.findByPk(req.user.id, {
@@ -14,9 +15,8 @@ const getLoggedInUser = async (req, res) => {
       });
     }
 
-    // This makes the logged-in user visible in the backend terminal.
     console.log(
-      `Logged-in user: id=${user.id}, name=${user.name}, email=${user.email}, phone=${user.phone}`
+      `[AUTH] Logged-in user -> id=${user.id}, name=${user.name}, email=${user.email}, phone=${user.phone}`
     );
 
     return res.status(200).json({ user });
@@ -28,9 +28,12 @@ const getLoggedInUser = async (req, res) => {
   }
 };
 
+// Save a message using the sender ID from the verified JWT.
 const sendMessage = async (req, res) => {
   try {
-    const messageText = req.body.message?.trim();
+    const messageText = typeof req.body.message === "string"
+      ? req.body.message.trim()
+      : "";
 
     if (!messageText) {
       return res.status(400).json({
@@ -38,8 +41,9 @@ const sendMessage = async (req, res) => {
       });
     }
 
-    // req.user.id comes from the verified JWT, not from the browser.
-    const sender = await User.findByPk(req.user.id);
+    const sender = await User.findByPk(req.user.id, {
+      attributes: ["id", "name", "email", "phone"]
+    });
 
     if (!sender) {
       return res.status(401).json({
@@ -48,19 +52,30 @@ const sendMessage = async (req, res) => {
     }
 
     console.log(
-      `Saving message from user id=${sender.id}, name=${sender.name}: ${messageText}`
+      `[MESSAGE] Saving -> senderId=${sender.id}, senderName=${sender.name}, text="${messageText}"`
     );
 
-    const chatMessage = await ChatMessage.create({
-      senderId: sender.id,
-      message: messageText
+    // The transaction makes the database write explicit and safe.
+    const chatMessage = await sequelize.transaction(async (transaction) => {
+      return ChatMessage.create(
+        {
+          senderId: sender.id,
+          message: messageText
+        },
+        { transaction }
+      );
     });
+
+    console.log(
+      `[MESSAGE] Saved -> messageId=${chatMessage.id}, senderId=${chatMessage.senderId}`
+    );
 
     return res.status(201).json({
       message: "Chat message saved successfully",
       chatMessage: {
         id: chatMessage.id,
         senderId: chatMessage.senderId,
+        senderName: sender.name,
         message: chatMessage.message,
         createdAt: chatMessage.createdAt
       }
@@ -74,23 +89,39 @@ const sendMessage = async (req, res) => {
   }
 };
 
-// Return ALL messages from the database.
+// Return every message from the database, including the sender's user ID/name.
 const getAllMessages = async (req, res) => {
   try {
     const messages = await ChatMessage.findAll({
-      order: [["createdAt", "ASC"]],
-      attributes: ["id", "senderId", "message", "createdAt"]
+      order: [["createdAt", "ASC"], ["id", "ASC"]],
+      attributes: ["id", "senderId", "message", "createdAt"],
+      include: [
+        {
+          model: User,
+          as: "sender",
+          attributes: ["id", "name"]
+        }
+      ]
     });
 
+    const result = messages.map((message) => ({
+      id: message.id,
+      senderId: message.senderId,
+      senderName: message.sender?.name || "Unknown user",
+      message: message.message,
+      createdAt: message.createdAt
+    }));
+
     console.log(
-      `Returning ${messages.length} message(s) from database for logged-in user id=${req.user.id}`
+      `[MESSAGE] Returning ${result.length} database message(s) to logged-in user id=${req.user.id}`
     );
 
-    return res.status(200).json({ messages });
+    return res.status(200).json({ messages: result });
   } catch (error) {
     console.error("Get all messages error:", error);
     return res.status(500).json({
-      message: "Unable to fetch chat messages"
+      message: "Unable to fetch chat messages",
+      error: error.message
     });
   }
 };

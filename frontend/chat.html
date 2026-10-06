@@ -13,48 +13,27 @@
       <header class="sidebar-header">
         <div class="avatar" id="myAvatar">U</div>
         <div class="sidebar-title">
-          <strong id="myName">Chats</strong>
-          <small>My account</small>
+          <strong id="myName">Loading...</strong>
+          <small id="myEmail">Loading account...</small>
         </div>
         <button class="icon-btn" id="logoutButton" title="Logout" aria-label="Logout">↪</button>
       </header>
 
       <div class="search-box">
         <span>⌕</span>
-        <input type="search" id="chatSearch" placeholder="Search or start new chat">
+        <input type="search" id="chatSearch" placeholder="Search messages or users">
       </div>
 
-      <div class="chat-list" id="chatList">
-        <button class="chat-item active" data-name="Alex Johnson">
-          <div class="avatar">A</div>
-          <div class="chat-item-content">
-            <div class="chat-item-top"><strong>Alex Johnson</strong><time>10:42 AM</time></div>
-            <div class="chat-preview">See you tomorrow! 👋</div>
-          </div>
-        </button>
-        <button class="chat-item" data-name="Priya Sharma">
-          <div class="avatar">P</div>
-          <div class="chat-item-content">
-            <div class="chat-item-top"><strong>Priya Sharma</strong><time>Yesterday</time></div>
-            <div class="chat-preview">The files are ready.</div>
-          </div>
-        </button>
-        <button class="chat-item" data-name="Rahul Mehta">
-          <div class="avatar">R</div>
-          <div class="chat-item-content">
-            <div class="chat-item-top"><strong>Rahul Mehta</strong><time>Monday</time></div>
-            <div class="chat-preview">Thanks!</div>
-          </div>
-        </button>
-      </div>
+      <!-- This list is built from real users/messages returned by the backend. -->
+      <div class="chat-list" id="chatList"></div>
     </aside>
 
     <section class="conversation">
       <header class="conversation-header">
-        <div class="avatar" id="contactAvatar">A</div>
+        <div class="avatar" id="contactAvatar">💬</div>
         <div>
-          <strong id="contactName">Alex Johnson</strong>
-          <small>online</small>
+          <strong id="contactName">All Messages</strong>
+          <small id="contactStatus">Database chat</small>
         </div>
       </header>
 
