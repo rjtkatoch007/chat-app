@@ -1,0 +1,96 @@
+const express = require("express");
+const cors = require("cors");
+
+require("dotenv").config();
+
+const sequelize =
+    require("./config/database");
+
+
+const User =
+    require("./models/User");
+
+const userRoutes =
+    require("./routes/userRoutes");
+
+const app = express();
+
+const PORT =
+    process.env.PORT || 3000;
+
+
+app.use(cors());
+
+app.use(express.json());
+
+app.use(
+    express.urlencoded({
+        extended: true
+    })
+);
+
+// Test route
+
+app.get("/", (req, res) => {
+
+    res.json({
+
+        message:
+            "Chat App backend is running"
+
+    });
+
+});
+
+
+// Routes
+
+app.use(
+    "/user",
+    userRoutes
+);
+
+// Start server
+
+const startServer = async () => {
+
+    try {
+
+        await sequelize.authenticate();
+
+        console.log(
+            "MySQL database connected"
+        );
+
+
+        await sequelize.sync({ alter: true });
+
+        console.log(
+            "Database tables are ready"
+        );
+
+
+        app.listen(
+            PORT,
+            () => {
+
+                console.log(
+                    `Server running at http://localhost:${PORT}`
+                );
+
+            }
+        );
+
+
+    } catch (error) {
+
+        console.error(
+            "Unable to start server:",
+            error.message
+        );
+
+    }
+};
+
+
+startServer();
