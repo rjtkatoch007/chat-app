@@ -1,6 +1,4 @@
 const API_URL = "http://localhost:3000";
-const POLL_INTERVAL = 2000;
-
 const token = localStorage.getItem("token");
 
 if (!token) {
@@ -26,6 +24,8 @@ let allMessages = [];
 let selectedUserId = null;
 let lastRenderedSignature = "";
 let isFirstMessageLoad = true;
+let chatSocket = null;
+let reconnectTimer = null;
 
 const initials = (name) => name?.trim().charAt(0).toUpperCase() || "U";
 
@@ -241,6 +241,82 @@ const renderChatList = () => {
   });
 };
 
+const connectWebSocket = () => {
+  if (chatSocket && (chatSocket.readyState === WebSocket.OPEN || chatSocket.readyState === WebSocket.CONNECTING)) {
+    return;
+  }
+
+  const wsProtocol = window.location.protocol === "https:" ? "wss:" : "ws:";
+  chatSocket = new WebSocket(`${wsProtocol}//localhost:3000/ws`);
+
+  chatSocket.addEventListener("open", () => {
+    console.log("[WS] Connected to chat server");
+
+    chatSocket.send(JSON.stringify({
+      type: "authenticate",
+      token
+    }));
+  });
+
+  chatSocket.addEventListener("message", (event) => {
+    try {
+      const data = JSON.parse(event.data);
+
+      if (data.type === "authenticated") {
+        console.log("[WS] Authenticated as:", data.user);
+        return;
+      }
+
+      if (data.type !== "new_message" || !data.message) {
+        return;
+      }
+
+      const incoming = data.message;
+      const exists = allMessages.some(
+        (message) => Number(message.id) === Number(incoming.id)
+      );
+
+      if (exists) return;
+
+      allMessages.push(incoming);
+      allMessages.sort((a, b) => {
+        const timeDifference = new Date(a.createdAt) - new Date(b.createdAt);
+        return timeDifference || Number(a.id) - Number(b.id);
+      });
+
+      // The sender's own POST response and the WebSocket broadcast can arrive
+      // close together. The ID check above prevents duplicate bubbles.
+      lastRenderedSignature = allMessages
+        .map((message) => `${message.id}:${message.senderId}:${message.createdAt}:${message.message}`)
+        .join("|");
+
+      renderChatList();
+      renderMessages();
+
+      if (Number(incoming.senderId) !== Number(loggedInUser.id)) {
+        console.log("[WS] New live message received:", incoming);
+      }
+    } catch (error) {
+      console.error("[WS] Invalid server message:", error);
+    }
+  });
+
+  chatSocket.addEventListener("close", (event) => {
+    console.warn(`[WS] Connection closed (${event.code}). Reconnecting...`);
+
+    if (reconnectTimer) return;
+
+    reconnectTimer = setTimeout(() => {
+      reconnectTimer = null;
+      connectWebSocket();
+    }, 3000);
+  });
+
+  chatSocket.addEventListener("error", (error) => {
+    console.error("[WS] Connection error:", error);
+  });
+};
+
 // Fetch ALL messages from MySQL.
 const loadMessages = async () => {
   try {
@@ -339,6 +415,9 @@ chatSearch.addEventListener("input", () => {
 });
 
 logoutButton.addEventListener("click", () => {
+  if (chatSocket) {
+    chatSocket.close(1000, "User logged out");
+  }
   localStorage.removeItem("token");
   localStorage.removeItem("user");
   window.location.href = "./login.html";
@@ -348,9 +427,7 @@ logoutButton.addEventListener("click", () => {
   try {
     await loadLoggedInUser();
     await loadMessages();
-
-    // Required polling: check MySQL for new messages every 2 seconds.
-    setInterval(loadMessages, POLL_INTERVAL);
+    connectWebSocket();
   } catch (error) {
     console.error("Chat initialization error:", error);
     showMessageStatus(error.message || "Unable to initialize chat", "error");

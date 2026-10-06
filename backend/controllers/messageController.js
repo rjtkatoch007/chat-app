@@ -1,6 +1,7 @@
 const ChatMessage = require("../models/ChatMessage");
 const User = require("../models/User");
 const sequelize = require("../config/database");
+const { broadcastNewMessage } = require("../websocket");
 
 // Get the actual logged-in user from the verified JWT and database.
 const getLoggedInUser = async (req, res) => {
@@ -66,19 +67,24 @@ const sendMessage = async (req, res) => {
       );
     });
 
+    const savedMessage = {
+      id: chatMessage.id,
+      senderId: chatMessage.senderId,
+      senderName: sender.name,
+      message: chatMessage.message,
+      createdAt: chatMessage.createdAt
+    };
+
     console.log(
       `[MESSAGE] Saved -> messageId=${chatMessage.id}, senderId=${chatMessage.senderId}`
     );
 
+    // Database write succeeded. Now notify every authenticated WebSocket client.
+    broadcastNewMessage(savedMessage);
+
     return res.status(201).json({
       message: "Chat message saved successfully",
-      chatMessage: {
-        id: chatMessage.id,
-        senderId: chatMessage.senderId,
-        senderName: sender.name,
-        message: chatMessage.message,
-        createdAt: chatMessage.createdAt
-      }
+      chatMessage: savedMessage
     });
   } catch (error) {
     console.error("Send message error:", error);

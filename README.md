@@ -135,3 +135,28 @@ All message endpoints require the JWT returned by login.
 - `GET /message/all` - returns every stored message with `id`, `senderId`, `message`, and `createdAt`.
 
 The chat frontend calls `/message/me` to identify the actual logged-in user, then calls `/message/all` when the chat page loads. It polls `/message/all` every 2 seconds with `setInterval`, so new database messages appear without manually refreshing the page. The sidebar and conversation are built from database data; there are no hard-coded Alex/Priya/Rahul users or fake messages.
+
+
+## Real-time WebSocket chat
+
+The chat now uses native WebSockets through the `ws` Node.js package.
+
+- HTTP APIs continue to handle authentication, message persistence, and loading history.
+- The browser opens `ws://localhost:3000/ws` after login.
+- The JWT is sent as the first WebSocket message for authentication.
+- When `POST /message/send` successfully commits a message to MySQL, the backend broadcasts the saved message to every authenticated WebSocket client.
+- Every connected browser receives the message immediately without a refresh.
+- The frontend reconnects automatically if the WebSocket connection is lost.
+
+Install the new backend dependency after extracting the project:
+
+```bash
+cd backend
+npm install
+```
+
+The WebSocket endpoint is:
+
+```text
+ws://localhost:3000/ws
+```

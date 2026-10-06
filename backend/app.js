@@ -1,5 +1,7 @@
 const express = require("express");
 const cors = require("cors");
+const http = require("http");
+const { setupWebSocket } = require("./websocket");
 
 require("dotenv").config();
 
@@ -79,12 +81,19 @@ const startServer = async () => {
         );
 
 
-        app.listen(
+        const server = http.createServer(app);
+
+        setupWebSocket(server);
+
+        server.listen(
             PORT,
             () => {
 
                 console.log(
                     `Server running at http://localhost:${PORT}`
+                );
+                console.log(
+                    `WebSocket endpoint: ws://localhost:${PORT}/ws`
                 );
 
             }
