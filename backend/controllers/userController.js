@@ -125,24 +125,32 @@ const login = async (req, res) => {
   }
 };
 
-// Return real users for the chat sidebar. Passwords are never returned.
-const getAllUsers = async (req, res) => {
+const searchUserByEmail = async (req, res) => {
   try {
-    const users = await User.findAll({
-      where: {
-        id: { [Op.ne]: req.user.id }
-      },
-      attributes: ["id", "name", "email", "phone"],
-      order: [["name", "ASC"]]
+    const email = String(req.query.email || "").trim().toLowerCase();
+
+    if (!email) {
+      return res.status(400).json({ message: "Email is required" });
+    }
+
+    const user = await User.findOne({
+      where: { email },
+      attributes: ["id", "name", "email", "phone"]
     });
 
-    return res.status(200).json({ users });
+    if (!user) {
+      return res.status(404).json({ message: "No user found with this email" });
+    }
+
+    if (Number(user.id) === Number(req.user.id)) {
+      return res.status(400).json({ message: "You cannot start a chat with yourself" });
+    }
+
+    return res.status(200).json({ user });
   } catch (error) {
-    console.error("Get users error:", error);
-    return res.status(500).json({
-      message: "Unable to load chat users"
-    });
+    console.error("Search user error:", error);
+    return res.status(500).json({ message: "Unable to search user" });
   }
 };
 
-module.exports = { signup, login, getAllUsers };
+module.exports = { signup, login, searchUserByEmail };
