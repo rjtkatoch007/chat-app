@@ -175,3 +175,17 @@ const socket = io("http://localhost:3000", {
 The backend authenticates the JWT during the Socket.IO handshake. New messages are saved to MySQL first and then emitted with the `new_message` event to connected users.
 
 Install the backend dependency with `npm install`.
+
+## Socket.IO Authentication
+
+The chat application reuses the JWT created during normal login for Socket.IO authentication.
+
+1. The frontend reads the JWT from `localStorage`.
+2. Socket.IO sends it in the connection handshake:
+   `auth: { token }`.
+3. The backend Socket.IO middleware verifies the JWT using `JWT_SECRET`.
+4. The backend loads the corresponding user from MySQL.
+5. The authenticated user is attached to `socket.user` and `socket.userId`.
+6. When a message is sent, the backend uses `socket.userId` as `senderId`; the browser cannot choose another user's ID.
+
+This is the Socket.IO authentication layer required by the task. It does not create a second login system or a second token.

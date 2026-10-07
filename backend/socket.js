@@ -17,13 +17,23 @@ const createSocketServer = (server) => {
   // Authenticate every Socket.IO connection using the same JWT as the REST APIs.
   io.use(async (socket, next) => {
     try {
+      // Reuse the exact JWT issued by the normal login endpoint.
+      // The browser sends it in the Socket.IO handshake as { auth: { token } }.
       const token = socket.handshake.auth?.token;
 
-      if (!token) {
+      if (!token || typeof token !== "string") {
         return next(new Error("Authentication token is required"));
       }
 
+      // Verify the JWT before allowing the socket connection.
       const decoded = jwt.verify(token, process.env.JWT_SECRET);
+
+      if (!decoded?.id) {
+        return next(new Error("Invalid authentication token"));
+      }
+
+      // Never trust a user ID supplied by the browser. Look up the user
+      // using the ID that came from the verified JWT payload.
       const user = await User.findByPk(decoded.id, {
         attributes: ["id", "name", "email", "phone"]
       });
@@ -32,7 +42,11 @@ const createSocketServer = (server) => {
         return next(new Error("User not found"));
       }
 
+      // Store the authenticated identity on the socket. All later socket
+      // events can safely use these values instead of client-supplied IDs.
       socket.user = user;
+      socket.userId = user.id;
+
       next();
     } catch (error) {
       console.error("[Socket.IO] Authentication failed:", error.message);
@@ -70,7 +84,9 @@ const createSocketServer = (server) => {
         const chatMessage = await sequelize.transaction(async (transaction) => {
           return ChatMessage.create(
             {
-              senderId: socket.user.id,
+              // The sender comes from the authenticated socket, never from
+              // the client payload. This prevents sender-ID spoofing.
+              senderId: socket.userId,
               message: messageText
             },
             { transaction }
@@ -79,7 +95,7 @@ const createSocketServer = (server) => {
 
         const savedMessage = {
           id: chatMessage.id,
-          senderId: socket.user.id,
+          senderId: socket.userId,
           senderName: socket.user.name,
           message: chatMessage.message,
           createdAt: chatMessage.createdAt

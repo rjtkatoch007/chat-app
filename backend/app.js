@@ -1,9 +1,9 @@
+require("dotenv").config();
+
 const express = require("express");
 const cors = require("cors");
 const http = require("http");
 const { createSocketServer } = require("./socket");
-
-require("dotenv").config();
 
 const sequelize =
     require("./config/database");
