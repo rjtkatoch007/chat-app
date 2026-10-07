@@ -8,7 +8,6 @@ require("dotenv").config();
 const sequelize =
     require("./config/database");
 
-
 const User =
     require("./models/User");
 const ChatMessage =
@@ -24,7 +23,6 @@ const app = express();
 const PORT =
     process.env.PORT || 3000;
 
-
 app.use(cors());
 
 app.use(express.json());
@@ -36,7 +34,6 @@ app.use(
 );
 
 // Test route
-
 app.get("/", (req, res) => {
 
     res.json({
@@ -48,9 +45,7 @@ app.get("/", (req, res) => {
 
 });
 
-
 // Routes
-
 app.use(
     "/user",
     userRoutes
@@ -62,7 +57,6 @@ app.use(
 );
 
 // Start server
-
 const startServer = async () => {
 
     try {
@@ -109,6 +103,5 @@ const startServer = async () => {
 
     }
 };
-
 
 startServer();
