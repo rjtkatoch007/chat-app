@@ -9,8 +9,8 @@ The chat page now follows the Socket.IO room assignment flow:
 1. The logged-in user authenticates with the existing JWT.
 2. The frontend provides an **email search box**.
 3. The frontend calls `GET /user/search?email=<email>` to find the registered user.
-4. A deterministic unique room ID is generated from both user IDs:
-   `private_<smallerId>_<largerId>`.
+4. A deterministic unique room ID is generated from both normalized email identifiers. The two emails are sorted alphabetically before combining:
+   `private_<alphabetically-first-email>__<alphabetically-second-email>`.
 5. The frontend joins that room with the custom Socket.IO event:
    ```js
    socket.emit("join_room", { roomId, recipientId }, callback);
@@ -23,7 +23,7 @@ The chat page now follows the Socket.IO room assignment flow:
      message
    });
    ```
-7. The backend validates that the authenticated socket belongs to the requested room, saves the message to MySQL, and sends it only to that room:
+7. The backend verifies the recipient exists, independently recalculates the room ID from the authenticated user's email and the recipient's email, saves the message to MySQL, and sends it only to that room:
    ```js
    io.to(roomId).emit("new_message", savedMessage);
    ```

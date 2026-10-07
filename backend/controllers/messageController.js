@@ -40,7 +40,7 @@ const sendMessage = async (req, res) => {
     ));
 
     const saved = { id: message.id, senderId: sender.id, senderName: sender.name, recipientId: recipient.id, recipientName: recipient.name, message: message.message, createdAt: message.createdAt };
-    broadcastNewMessage(saved);
+    await broadcastNewMessage(saved);
     res.status(201).json({ message: "Chat message saved successfully", chatMessage: saved });
   } catch (error) {
     console.error("Send message error:", error);
@@ -54,6 +54,9 @@ const getAllMessages = async (req, res) => {
     if (!Number.isInteger(recipientId) || recipientId <= 0) return res.status(400).json({ message: "Valid userId is required" });
 
     const currentUserId = Number(req.user.id);
+    const currentUser = await User.findByPk(currentUserId, { attributes: ["id", "email"] });
+    if (!currentUser) return res.status(401).json({ message: "Logged-in user was not found" });
+
     const messages = await ChatMessage.findAll({
       where: {
         [Op.or]: [
@@ -67,7 +70,10 @@ const getAllMessages = async (req, res) => {
         { model: User, as: "recipient", attributes: ["id", "name"] }
       ]
     });
-    res.json({ roomId: getPrivateRoomId(currentUserId, recipientId), messages: messages.map(dto) });
+    const recipient = await User.findByPk(recipientId, { attributes: ["id", "email"] });
+    if (!recipient) return res.status(404).json({ message: "User was not found" });
+
+    res.json({ roomId: getPrivateRoomId(currentUser.email, recipient.email), messages: messages.map(dto) });
   } catch (error) {
     console.error("Get conversation error:", error);
     res.status(500).json({ message: "Unable to fetch conversation" });

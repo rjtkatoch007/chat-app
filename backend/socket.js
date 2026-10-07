@@ -6,10 +6,16 @@ const sequelize = require("./config/database");
 
 let io = null;
 
-// Deterministic unique room ID for a pair of users.
+// Deterministic private-room ID. Normalize the identifiers first, then
+// sort them alphabetically so A+B and B+A always produce the same room.
 const getPrivateRoomId = (userA, userB) => {
-  const ids = [Number(userA), Number(userB)].sort((a, b) => a - b);
-  return `private_${ids[0]}_${ids[1]}`;
+  const identifiers = [String(userA || "").trim().toLowerCase(), String(userB || "").trim().toLowerCase()];
+  if (!identifiers[0] || !identifiers[1] || identifiers[0] === identifiers[1]) {
+    return null;
+  }
+
+  identifiers.sort();
+  return `private_${identifiers[0]}__${identifiers[1]}`;
 };
 
 const createSocketServer = (server) => {
@@ -44,19 +50,24 @@ const createSocketServer = (server) => {
     socket.on("join_room", async ({ roomId, recipientId }, callback) => {
       try {
         const targetId = Number(recipientId);
-        const expectedRoomId = getPrivateRoomId(socket.userId, targetId);
         if (!Number.isInteger(targetId) || targetId <= 0 || targetId === Number(socket.userId)) {
           return callback?.({ success: false, message: "Invalid recipient" });
         }
-        if (roomId !== expectedRoomId) {
-          return callback?.({ success: false, message: "Invalid room ID" });
-        }
+
+        // Resolve the recipient from the database before accepting the room.
+        // This prevents a client from inventing a dummy/non-existent email or
+        // pairing itself with an arbitrary room name.
         const recipient = await User.findByPk(targetId, { attributes: ["id", "name", "email"] });
         if (!recipient) return callback?.({ success: false, message: "User not found" });
 
+        const expectedRoomId = getPrivateRoomId(socket.user.email, recipient.email);
+        if (!expectedRoomId || roomId !== expectedRoomId) {
+          return callback?.({ success: false, message: "Invalid room ID" });
+        }
+
         if (socket.currentRoomId) socket.leave(socket.currentRoomId);
-        await socket.join(roomId);
-        socket.currentRoomId = roomId;
+        await socket.join(expectedRoomId);
+        socket.currentRoomId = expectedRoomId;
         socket.currentRecipientId = targetId;
 
         console.log(`[Socket.IO] user ${socket.userId} joined room ${roomId}`);
@@ -77,16 +88,19 @@ const createSocketServer = (server) => {
       try {
         const text = typeof message === "string" ? message.trim() : "";
         const targetId = Number(recipientId);
-        const expectedRoomId = getPrivateRoomId(socket.userId, targetId);
 
         if (!text) return callback?.({ success: false, message: "Message cannot be empty" });
-        if (!Number.isInteger(targetId) || targetId <= 0) return callback?.({ success: false, message: "Invalid recipient" });
-        if (roomId !== expectedRoomId || socket.currentRoomId !== expectedRoomId) {
-          return callback?.({ success: false, message: "Join the correct room before sending" });
+        if (!Number.isInteger(targetId) || targetId <= 0 || targetId === Number(socket.userId)) {
+          return callback?.({ success: false, message: "Invalid recipient" });
         }
 
         const recipient = await User.findByPk(targetId, { attributes: ["id", "name", "email"] });
         if (!recipient) return callback?.({ success: false, message: "Recipient not found" });
+
+        const expectedRoomId = getPrivateRoomId(socket.user.email, recipient.email);
+        if (!expectedRoomId || roomId !== expectedRoomId || socket.currentRoomId !== expectedRoomId) {
+          return callback?.({ success: false, message: "Join the correct room before sending" });
+        }
 
         const saved = await sequelize.transaction((transaction) => ChatMessage.create({
           senderId: socket.userId,
@@ -123,10 +137,17 @@ const createSocketServer = (server) => {
   return io;
 };
 
-const broadcastNewMessage = (chatMessage) => {
-  if (!io || !chatMessage?.recipientId) return;
-  const roomId = getPrivateRoomId(chatMessage.senderId, chatMessage.recipientId);
-  io.to(roomId).emit("new_message", { ...chatMessage, roomId });
+const broadcastNewMessage = async (chatMessage) => {
+  if (!io || !chatMessage?.senderId || !chatMessage?.recipientId) return;
+
+  const [sender, recipient] = await Promise.all([
+    User.findByPk(chatMessage.senderId, { attributes: ["email"] }),
+    User.findByPk(chatMessage.recipientId, { attributes: ["email"] })
+  ]);
+  if (!sender || !recipient) return;
+
+  const roomId = getPrivateRoomId(sender.email, recipient.email);
+  if (roomId) io.to(roomId).emit("new_message", { ...chatMessage, roomId });
 };
 
 module.exports = { createSocketServer, getIO: () => io, broadcastNewMessage, getPrivateRoomId };

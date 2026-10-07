@@ -30,10 +30,16 @@ const recentChats = new Map();
 
 const initials = (name) => name?.trim().charAt(0).toUpperCase() || "U";
 
-// Both clients calculate the same room ID from the two user IDs.
-const createRoomId = (userA, userB) => {
-  const ids = [Number(userA), Number(userB)].sort((a, b) => a - b);
-  return `private_${ids[0]}_${ids[1]}`;
+// Both clients calculate the same room ID from the two normalized email
+// identifiers. Sorting makes User A -> User B identical to User B -> User A.
+const createRoomId = (emailA, emailB) => {
+  const emails = [emailA, emailB]
+    .map((email) => String(email || "").trim().toLowerCase());
+
+  if (!emails[0] || !emails[1] || emails[0] === emails[1]) return null;
+
+  emails.sort();
+  return `private_${emails[0]}__${emails[1]}`;
 };
 
 const handleUnauthorized = () => {
@@ -171,15 +177,18 @@ const loadConversation = async (user) => {
   const data = await response.json();
   if (!response.ok) throw new Error(data.message || "Unable to load conversation");
   conversationMessages = Array.isArray(data.messages) ? data.messages : [];
-  selectedRoomId = data.roomId || createRoomId(loggedInUser.id, user.id);
+  selectedRoomId = data.roomId || createRoomId(loggedInUser.email, user.email);
   renderMessages();
 };
 
 const joinRoom = (user) => new Promise((resolve, reject) => {
   if (!chatSocket?.connected) return reject(new Error("Socket.IO connection is not ready"));
 
-  const roomId = createRoomId(loggedInUser.id, user.id);
-  // Required assignment event: join_room sends the desired room ID to the server.
+  const roomId = createRoomId(loggedInUser.email, user.email);
+  if (!roomId) return reject(new Error("Unable to create a private room"));
+
+  // Required assignment event: join_room sends the deterministic room ID to the server.
+  // The server independently verifies the recipient and recalculates the room ID.
   chatSocket.emit("join_room", { roomId, recipientId: user.id }, (result) => {
     if (!result?.success) return reject(new Error(result?.message || "Unable to join room"));
     selectedRoomId = result.roomId;
