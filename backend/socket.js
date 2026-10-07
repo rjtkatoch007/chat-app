@@ -6,6 +6,12 @@ const sequelize = require("./config/database");
 
 let io = null;
 
+// One deterministic room per pair of users.
+const getPrivateRoomName = (userA, userB) => {
+  const ids = [Number(userA), Number(userB)].sort((a, b) => a - b);
+  return `private_chat:${ids[0]}:${ids[1]}`;
+};
+
 const createSocketServer = (server) => {
   io = new Server(server, {
     cors: {
@@ -14,26 +20,21 @@ const createSocketServer = (server) => {
     }
   });
 
-  // Authenticate every Socket.IO connection using the same JWT as the REST APIs.
+  // Reuse the same JWT authentication used by the REST API.
   io.use(async (socket, next) => {
     try {
-      // Reuse the exact JWT issued by the normal login endpoint.
-      // The browser sends it in the Socket.IO handshake as { auth: { token } }.
       const token = socket.handshake.auth?.token;
 
       if (!token || typeof token !== "string") {
         return next(new Error("Authentication token is required"));
       }
 
-      // Verify the JWT before allowing the socket connection.
       const decoded = jwt.verify(token, process.env.JWT_SECRET);
 
       if (!decoded?.id) {
         return next(new Error("Invalid authentication token"));
       }
 
-      // Never trust a user ID supplied by the browser. Look up the user
-      // using the ID that came from the verified JWT payload.
       const user = await User.findByPk(decoded.id, {
         attributes: ["id", "name", "email", "phone"]
       });
@@ -42,11 +43,8 @@ const createSocketServer = (server) => {
         return next(new Error("User not found"));
       }
 
-      // Store the authenticated identity on the socket. All later socket
-      // events can safely use these values instead of client-supplied IDs.
       socket.user = user;
       socket.userId = user.id;
-
       next();
     } catch (error) {
       console.error("[Socket.IO] Authentication failed:", error.message);
@@ -66,27 +64,110 @@ const createSocketServer = (server) => {
       }
     });
 
-    // Socket.IO can also be used to send a message directly.
-    // The message is saved first, then broadcast to all connected users.
+    // Join the private room for the selected user.
+    socket.on("join_chat", async (payload, callback) => {
+      try {
+        const recipientId = Number(payload?.recipientId);
+
+        if (!Number.isInteger(recipientId) || recipientId <= 0) {
+          return callback?.({ success: false, message: "A valid recipientId is required" });
+        }
+
+        if (recipientId === Number(socket.userId)) {
+          return callback?.({ success: false, message: "You cannot open a private chat with yourself" });
+        }
+
+        const recipient = await User.findByPk(recipientId, {
+          attributes: ["id", "name"]
+        });
+
+        if (!recipient) {
+          return callback?.({ success: false, message: "Chat user was not found" });
+        }
+
+        if (socket.currentChatRoom) {
+          socket.leave(socket.currentChatRoom);
+        }
+
+        const roomName = getPrivateRoomName(socket.userId, recipientId);
+        await socket.join(roomName);
+        socket.currentChatRoom = roomName;
+        socket.currentRecipientId = recipientId;
+
+        console.log(
+          `[Socket.IO] User ${socket.userId} joined ${roomName}`
+        );
+
+        callback?.({
+          success: true,
+          roomName,
+          recipient: {
+            id: recipient.id,
+            name: recipient.name
+          }
+        });
+      } catch (error) {
+        console.error("[Socket.IO] Join chat error:", error);
+        callback?.({ success: false, message: "Unable to join private chat" });
+      }
+    });
+
+    socket.on("leave_chat", (callback) => {
+      if (socket.currentChatRoom) {
+        socket.leave(socket.currentChatRoom);
+        console.log(
+          `[Socket.IO] User ${socket.userId} left ${socket.currentChatRoom}`
+        );
+      }
+
+      socket.currentChatRoom = null;
+      socket.currentRecipientId = null;
+      callback?.({ success: true });
+    });
+
     socket.on("send_message", async (payload, callback) => {
       try {
         const messageText = typeof payload?.message === "string"
           ? payload.message.trim()
           : "";
+        const recipientId = Number(payload?.recipientId);
 
         if (!messageText) {
+          return callback?.({ success: false, message: "Message cannot be empty" });
+        }
+
+        if (!Number.isInteger(recipientId) || recipientId <= 0) {
+          return callback?.({ success: false, message: "A valid recipientId is required" });
+        }
+
+        if (recipientId === Number(socket.userId)) {
+          return callback?.({ success: false, message: "You cannot message yourself" });
+        }
+
+        const recipient = await User.findByPk(recipientId, {
+          attributes: ["id", "name"]
+        });
+
+        if (!recipient) {
+          return callback?.({ success: false, message: "Recipient user was not found" });
+        }
+
+        const roomName = getPrivateRoomName(socket.userId, recipientId);
+
+        // The server decides which room the message belongs to. The client
+        // cannot choose an arbitrary room and cannot spoof senderId.
+        if (socket.currentChatRoom !== roomName) {
           return callback?.({
             success: false,
-            message: "Message cannot be empty"
+            message: "Join this private chat before sending a message"
           });
         }
 
         const chatMessage = await sequelize.transaction(async (transaction) => {
           return ChatMessage.create(
             {
-              // The sender comes from the authenticated socket, never from
-              // the client payload. This prevents sender-ID spoofing.
               senderId: socket.userId,
+              recipientId,
               message: messageText
             },
             { transaction }
@@ -97,16 +178,18 @@ const createSocketServer = (server) => {
           id: chatMessage.id,
           senderId: socket.userId,
           senderName: socket.user.name,
+          recipientId: recipient.id,
+          recipientName: recipient.name,
           message: chatMessage.message,
           createdAt: chatMessage.createdAt
         };
 
         console.log(
-          `[Socket.IO] Message saved -> id=${savedMessage.id}, senderId=${savedMessage.senderId}, text="${savedMessage.message}"`
+          `[Socket.IO] Private message saved -> ${socket.userId} -> ${recipientId}, room=${roomName}`
         );
 
-        // Send the new message to every connected/authenticated user.
-        io.emit("new_message", savedMessage);
+        // Only the two sockets in this private room receive the live message.
+        io.to(roomName).emit("new_message", savedMessage);
 
         callback?.({
           success: true,
@@ -115,10 +198,7 @@ const createSocketServer = (server) => {
         });
       } catch (error) {
         console.error("[Socket.IO] Send message error:", error);
-        callback?.({
-          success: false,
-          message: "Unable to save chat message"
-        });
+        callback?.({ success: false, message: "Unable to save chat message" });
       }
     });
 
@@ -135,16 +215,22 @@ const createSocketServer = (server) => {
 
 const getIO = () => io;
 
-// Used by the existing REST /message/send API so it can still broadcast
-// messages if another client calls that API directly.
+// Existing REST clients can still create a message. The frontend now uses
+// Socket.IO for sending, but this helper keeps the REST endpoint compatible.
 const broadcastNewMessage = (chatMessage) => {
-  if (io) {
-    io.emit("new_message", chatMessage);
-  }
+  if (!io || !chatMessage?.recipientId) return;
+
+  const roomName = getPrivateRoomName(
+    chatMessage.senderId,
+    chatMessage.recipientId
+  );
+
+  io.to(roomName).emit("new_message", chatMessage);
 };
 
 module.exports = {
   createSocketServer,
   getIO,
-  broadcastNewMessage
+  broadcastNewMessage,
+  getPrivateRoomName
 };

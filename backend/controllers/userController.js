@@ -125,4 +125,24 @@ const login = async (req, res) => {
   }
 };
 
-module.exports = { signup, login };
+// Return real users for the chat sidebar. Passwords are never returned.
+const getAllUsers = async (req, res) => {
+  try {
+    const users = await User.findAll({
+      where: {
+        id: { [Op.ne]: req.user.id }
+      },
+      attributes: ["id", "name", "email", "phone"],
+      order: [["name", "ASC"]]
+    });
+
+    return res.status(200).json({ users });
+  } catch (error) {
+    console.error("Get users error:", error);
+    return res.status(500).json({
+      message: "Unable to load chat users"
+    });
+  }
+};
+
+module.exports = { signup, login, getAllUsers };

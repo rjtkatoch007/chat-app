@@ -15,20 +15,23 @@ const contactStatus = document.getElementById("contactStatus");
 const messageArea = document.getElementById("messageArea");
 const messageForm = document.getElementById("messageForm");
 const messageInput = document.getElementById("messageInput");
+const sendButton = messageForm.querySelector(".send-btn");
 const logoutButton = document.getElementById("logoutButton");
 const chatSearch = document.getElementById("chatSearch");
 const chatList = document.getElementById("chatList");
 
 let loggedInUser = null;
-let allMessages = [];
+let contacts = [];
+let conversationMessages = [];
 let selectedUserId = null;
-let lastRenderedSignature = "";
-let isFirstMessageLoad = true;
+let selectedUser = null;
 let chatSocket = null;
+let joinedRoom = null;
 
 const initials = (name) => name?.trim().charAt(0).toUpperCase() || "U";
 
 const handleUnauthorized = () => {
+  if (chatSocket) chatSocket.disconnect();
   localStorage.removeItem("token");
   localStorage.removeItem("user");
   window.location.href = "./login.html";
@@ -66,35 +69,13 @@ const scrollToBottom = () => {
   messageArea.scrollTop = messageArea.scrollHeight;
 };
 
-// Ask the backend for the real user represented by the JWT.
-const loadLoggedInUser = async () => {
-  const response = await fetch(`${API_URL}/message/me`, {
-    headers: {
-      Authorization: `Bearer ${token}`
-    }
-  });
+const getLastMessageForUser = (userId) => {
+  const relevant = conversationMessages.filter(
+    (message) => Number(message.senderId) === Number(userId)
+      || Number(message.recipientId) === Number(userId)
+  );
 
-  if (response.status === 401) {
-    handleUnauthorized();
-    return null;
-  }
-
-  const data = await response.json();
-
-  if (!response.ok) {
-    throw new Error(data.message || "Unable to identify logged-in user");
-  }
-
-  loggedInUser = data.user;
-  localStorage.setItem("user", JSON.stringify(loggedInUser));
-
-  myName.textContent = loggedInUser.name;
-  myEmail.textContent = loggedInUser.email;
-  myAvatar.textContent = initials(loggedInUser.name);
-
-  console.log("Logged-in user from backend:", loggedInUser);
-
-  return loggedInUser;
+  return relevant[relevant.length - 1] || null;
 };
 
 const createMessageElement = (message) => {
@@ -110,7 +91,7 @@ const createMessageElement = (message) => {
   if (!isMine) {
     const sender = document.createElement("strong");
     sender.className = "message-sender";
-    sender.textContent = message.senderName || `User ${message.senderId}`;
+    sender.textContent = message.senderName || selectedUser?.name || "User";
     bubble.appendChild(sender);
   }
 
@@ -128,74 +109,60 @@ const createMessageElement = (message) => {
   return wrapper;
 };
 
-const renderMessages = () => {
-  const filteredMessages = selectedUserId === null
-    ? allMessages
-    : allMessages.filter((message) => Number(message.senderId) === Number(selectedUserId));
-
-  const wasNearBottom =
-    messageArea.scrollHeight - messageArea.scrollTop - messageArea.clientHeight < 120;
-
+const renderMessages = (scroll = true) => {
   messageArea.innerHTML = "";
 
-  if (filteredMessages.length === 0) {
+  if (!selectedUser) {
     const emptyState = document.createElement("div");
     emptyState.className = "empty-chat-state";
-    emptyState.textContent = selectedUserId === null
-      ? "No messages yet. Send your first message!"
-      : "No messages with this user yet.";
+    emptyState.textContent = "Select a contact from the left to open a private chat.";
     messageArea.appendChild(emptyState);
     return;
   }
 
-  filteredMessages.forEach((message) => {
+  if (conversationMessages.length === 0) {
+    const emptyState = document.createElement("div");
+    emptyState.className = "empty-chat-state";
+    emptyState.textContent = `No messages with ${selectedUser.name} yet. Say hello!`;
+    messageArea.appendChild(emptyState);
+    return;
+  }
+
+  conversationMessages.forEach((message) => {
     messageArea.appendChild(createMessageElement(message));
   });
 
-  if (isFirstMessageLoad || wasNearBottom) {
-    scrollToBottom();
-  }
+  if (scroll) scrollToBottom();
 };
 
 const renderChatList = () => {
-  const users = new Map();
-
-  allMessages.forEach((message) => {
-    const id = Number(message.senderId);
-    if (!users.has(id)) {
-      users.set(id, {
-        id,
-        name: message.senderName || `User ${id}`,
-        lastMessage: message.message,
-        lastTime: message.createdAt
-      });
-    } else {
-      const existing = users.get(id);
-      existing.lastMessage = message.message;
-      existing.lastTime = message.createdAt;
-    }
-  });
-
+  const search = chatSearch.value.toLowerCase().trim();
   chatList.innerHTML = "";
 
-  // Always show the current user's own chat if they have no messages yet.
-  if (loggedInUser && !users.has(Number(loggedInUser.id))) {
-    users.set(Number(loggedInUser.id), {
-      id: Number(loggedInUser.id),
-      name: loggedInUser.name,
-      lastMessage: "No messages yet",
-      lastTime: null
-    });
+  const filtered = contacts.filter((user) => {
+    const haystack = `${user.name} ${user.email} ${user.phone}`.toLowerCase();
+    return haystack.includes(search);
+  });
+
+  if (filtered.length === 0) {
+    const empty = document.createElement("div");
+    empty.className = "empty-chat-state";
+    empty.textContent = search ? "No users match your search." : "No other registered users yet.";
+    chatList.appendChild(empty);
+    return;
   }
 
-  users.forEach((user) => {
+  filtered.forEach((user) => {
+    const lastMessage = getLastMessageForUser(user.id);
+
     const item = document.createElement("button");
     item.type = "button";
     item.className = "chat-item";
     item.dataset.name = user.name;
+    item.dataset.email = user.email;
     item.dataset.userId = user.id;
 
-    if (selectedUserId !== null && Number(selectedUserId) === Number(user.id)) {
+    if (Number(selectedUserId) === Number(user.id)) {
       item.classList.add("active");
     }
 
@@ -210,51 +177,146 @@ const renderChatList = () => {
     top.className = "chat-item-top";
 
     const name = document.createElement("strong");
-    name.textContent = Number(user.id) === Number(loggedInUser.id)
-      ? `${user.name} (You)`
-      : user.name;
+    name.textContent = user.name;
 
     const time = document.createElement("time");
-    time.textContent = user.lastTime ? formatTime(user.lastTime) : "";
+    time.textContent = lastMessage ? formatTime(lastMessage.createdAt) : "";
 
     const preview = document.createElement("div");
     preview.className = "chat-preview";
-    preview.textContent = user.lastMessage;
+    preview.textContent = lastMessage ? lastMessage.message : user.email;
 
     top.append(name, time);
     content.append(top, preview);
     item.append(avatar, content);
 
-    item.addEventListener("click", () => {
-      selectedUserId = Number(user.id);
-      contactName.textContent = Number(user.id) === Number(loggedInUser.id)
-        ? `${user.name} (You)`
-        : user.name;
-      contactAvatar.textContent = initials(user.name);
-      contactStatus.textContent = `User ID: ${user.id}`;
-      renderChatList();
-      renderMessages();
-    });
-
+    item.addEventListener("click", () => openConversation(user));
     chatList.appendChild(item);
   });
 };
 
+const loadLoggedInUser = async () => {
+  const response = await fetch(`${API_URL}/message/me`, {
+    headers: { Authorization: `Bearer ${token}` }
+  });
+
+  if (response.status === 401) {
+    handleUnauthorized();
+    return null;
+  }
+
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.message || "Unable to identify logged-in user");
+
+  loggedInUser = data.user;
+  localStorage.setItem("user", JSON.stringify(loggedInUser));
+
+  myName.textContent = loggedInUser.name;
+  myEmail.textContent = loggedInUser.email;
+  myAvatar.textContent = initials(loggedInUser.name);
+
+  return loggedInUser;
+};
+
+const loadContacts = async () => {
+  const response = await fetch(`${API_URL}/user/all`, {
+    headers: { Authorization: `Bearer ${token}` }
+  });
+
+  if (response.status === 401) {
+    handleUnauthorized();
+    return;
+  }
+
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.message || "Unable to load users");
+
+  contacts = Array.isArray(data.users) ? data.users : [];
+  renderChatList();
+};
+
+const loadConversation = async (userId) => {
+  const response = await fetch(`${API_URL}/message/all?userId=${encodeURIComponent(userId)}`, {
+    headers: { Authorization: `Bearer ${token}` }
+  });
+
+  if (response.status === 401) {
+    handleUnauthorized();
+    return;
+  }
+
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.message || "Unable to load conversation");
+
+  conversationMessages = Array.isArray(data.messages) ? data.messages : [];
+  renderMessages(true);
+  renderChatList();
+};
+
+const joinPrivateRoom = (user) => new Promise((resolve, reject) => {
+  if (!chatSocket?.connected) {
+    reject(new Error("Real-time connection is not ready"));
+    return;
+  }
+
+  chatSocket.emit("join_chat", { recipientId: user.id }, (result) => {
+    if (!result?.success) {
+      reject(new Error(result?.message || "Unable to join private chat"));
+      return;
+    }
+
+    joinedRoom = result.roomName;
+    resolve(result);
+  });
+});
+
+const openConversation = async (user) => {
+  if (!user) return;
+
+  try {
+    selectedUser = user;
+    selectedUserId = Number(user.id);
+
+    contactName.textContent = user.name;
+    contactAvatar.textContent = initials(user.name);
+    contactStatus.textContent = user.email;
+    messageInput.disabled = true;
+    sendButton.disabled = true;
+
+    renderChatList();
+    renderMessages(false);
+
+    await joinPrivateRoom(user);
+    await loadConversation(user.id);
+
+    messageInput.disabled = false;
+    sendButton.disabled = false;
+    messageInput.focus();
+    contactStatus.textContent = "Private chat • Socket.IO room connected";
+  } catch (error) {
+    console.error("Open conversation error:", error);
+    showMessageStatus(error.message || "Unable to open private chat", "error");
+  }
+};
+
 const connectSocketIO = () => {
   if (typeof io === "undefined") {
-    console.error("Socket.IO client library was not loaded.");
     showMessageStatus("Socket.IO client could not be loaded", "error");
     return;
   }
 
-  chatSocket = io("http://localhost:3000", {
-    auth: {
-      token
-    }
+  chatSocket = io(API_URL, {
+    auth: { token }
   });
 
   chatSocket.on("connect", () => {
-    console.log("[Socket.IO] Connected to http://localhost:3000");
+    console.log(`[Socket.IO] Connected -> ${chatSocket.id}`);
+
+    if (selectedUser) {
+      joinPrivateRoom(selectedUser).catch((error) => {
+        console.error("Room rejoin failed:", error);
+      });
+    }
   });
 
   chatSocket.on("authenticated", (data) => {
@@ -263,127 +325,87 @@ const connectSocketIO = () => {
 
   chatSocket.on("connect_error", (error) => {
     console.error("[Socket.IO] Connection error:", error.message);
-    showMessageStatus("Real-time connection unavailable", "error");
+    messageInput.disabled = true;
+    sendButton.disabled = true;
+    showMessageStatus("Socket.IO authentication/connection failed", "error");
   });
 
   chatSocket.on("new_message", (incoming) => {
-    if (!incoming) return;
+    if (!incoming || !selectedUser || !loggedInUser) return;
 
-    const exists = allMessages.some(
+    const isCurrentConversation =
+      (Number(incoming.senderId) === Number(loggedInUser.id)
+        && Number(incoming.recipientId) === Number(selectedUser.id))
+      ||
+      (Number(incoming.senderId) === Number(selectedUser.id)
+        && Number(incoming.recipientId) === Number(loggedInUser.id));
+
+    if (!isCurrentConversation) return;
+
+    const exists = conversationMessages.some(
       (message) => Number(message.id) === Number(incoming.id)
     );
 
     if (exists) return;
 
-    allMessages.push(incoming);
-    allMessages.sort((a, b) => {
-      const timeDifference = new Date(a.createdAt) - new Date(b.createdAt);
-      return timeDifference || Number(a.id) - Number(b.id);
+    const wasNearBottom =
+      messageArea.scrollHeight - messageArea.scrollTop - messageArea.clientHeight < 120;
+
+    conversationMessages.push(incoming);
+    conversationMessages.sort((a, b) => {
+      const difference = new Date(a.createdAt) - new Date(b.createdAt);
+      return difference || Number(a.id) - Number(b.id);
     });
 
-    lastRenderedSignature = allMessages
-      .map((message) => `${message.id}:${message.senderId}:${message.createdAt}:${message.message}`)
-      .join("|");
-
+    renderMessages(wasNearBottom);
     renderChatList();
-    renderMessages();
-
-    console.log("[Socket.IO] New live message received:", incoming);
   });
 
   chatSocket.on("disconnect", (reason) => {
     console.warn("[Socket.IO] Disconnected:", reason);
+    messageInput.disabled = true;
+    sendButton.disabled = true;
   });
 };
 
-// Fetch ALL messages from MySQL.
-const loadMessages = async () => {
-  try {
-    const response = await fetch(`${API_URL}/message/all`, {
-      headers: {
-        Authorization: `Bearer ${token}`
-      }
-    });
-
-    if (response.status === 401) {
-      handleUnauthorized();
-      return;
-    }
-
-    const data = await response.json();
-
-    if (!response.ok) {
-      throw new Error(data.message || "Unable to load messages");
-    }
-
-    const messages = Array.isArray(data.messages) ? data.messages : [];
-    const signature = messages
-      .map((message) => `${message.id}:${message.senderId}:${message.createdAt}:${message.message}`)
-      .join("|");
-
-    if (signature === lastRenderedSignature) {
-      return;
-    }
-
-    allMessages = messages;
-    lastRenderedSignature = signature;
-
-    renderChatList();
-    renderMessages();
-    isFirstMessageLoad = false;
-  } catch (error) {
-    console.error("Load messages error:", error);
-    if (isFirstMessageLoad) {
-      showMessageStatus("Unable to load saved messages", "error");
-    }
-  }
-};
-
-messageForm.addEventListener("submit", async (event) => {
+messageForm.addEventListener("submit", (event) => {
   event.preventDefault();
 
   const text = messageInput.value.trim();
-  if (!text) return;
+  if (!text || !selectedUser) return;
 
-  const sendButton = messageForm.querySelector(".send-btn");
+  if (!chatSocket?.connected || !joinedRoom) {
+    showMessageStatus("Private chat connection is not ready", "error");
+    return;
+  }
+
   sendButton.disabled = true;
   messageInput.disabled = true;
 
-  try {
-    if (!chatSocket || !chatSocket.connected) {
-      throw new Error("Real-time chat connection is not ready");
-    }
-
-    chatSocket.emit("send_message", { message: text }, (result) => {
+  chatSocket.emit(
+    "send_message",
+    {
+      message: text,
+      recipientId: selectedUser.id
+    },
+    (result) => {
       if (!result?.success) {
         showMessageStatus(result?.message || "Unable to send message", "error");
-        return;
+      } else {
+        messageInput.value = "";
       }
 
-      console.log("Message saved through Socket.IO:", result.chatMessage);
-      messageInput.value = "";
-    });
-  } catch (error) {
-    console.error("Send message error:", error);
-    showMessageStatus(error.message || "Unable to send message", "error");
-  } finally {
-    sendButton.disabled = false;
-    messageInput.disabled = false;
-    messageInput.focus();
-  }
+      sendButton.disabled = false;
+      messageInput.disabled = false;
+      messageInput.focus();
+    }
+  );
 });
 
-chatSearch.addEventListener("input", () => {
-  const search = chatSearch.value.toLowerCase().trim();
-  document.querySelectorAll(".chat-item").forEach((item) => {
-    item.hidden = !item.dataset.name.toLowerCase().includes(search);
-  });
-});
+chatSearch.addEventListener("input", renderChatList);
 
 logoutButton.addEventListener("click", () => {
-  if (chatSocket) {
-    chatSocket.disconnect();
-  }
+  if (chatSocket) chatSocket.disconnect();
   localStorage.removeItem("token");
   localStorage.removeItem("user");
   window.location.href = "./login.html";
@@ -392,7 +414,7 @@ logoutButton.addEventListener("click", () => {
 (async () => {
   try {
     await loadLoggedInUser();
-    await loadMessages();
+    await loadContacts();
     connectSocketIO();
   } catch (error) {
     console.error("Chat initialization error:", error);

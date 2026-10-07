@@ -229,3 +229,23 @@ a { text-decoration: none; }
   opacity: .6;
   cursor: not-allowed;
 }
+
+.message-sender {
+  display: block;
+  margin-bottom: 3px;
+  color: var(--primary-dark);
+  font-size: 12px;
+}
+
+.chat-list .empty-chat-state {
+  margin: 20px 12px;
+  width: auto;
+}
+
+.message-status[data-type="error"] {
+  color: #d32f2f;
+}
+
+.message-status[data-type="info"] {
+  color: var(--muted);
+}

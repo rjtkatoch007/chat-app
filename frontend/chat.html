@@ -23,10 +23,9 @@
 
       <div class="search-box">
         <span>⌕</span>
-        <input type="search" id="chatSearch" placeholder="Search messages or users">
+        <input type="search" id="chatSearch" placeholder="Search by name or email" autocomplete="off">
       </div>
 
-      <!-- This list is built from real users/messages returned by the backend. -->
       <div class="chat-list" id="chatList"></div>
     </aside>
 
@@ -34,19 +33,19 @@
       <header class="conversation-header">
         <div class="avatar" id="contactAvatar">💬</div>
         <div>
-          <strong id="contactName">All Messages</strong>
-          <small id="contactStatus">Database chat</small>
+          <strong id="contactName">Select a contact</strong>
+          <small id="contactStatus">Choose a user to start a private chat</small>
         </div>
       </header>
 
       <div class="message-area" id="messageArea" aria-live="polite">
-        <div class="empty-chat-state">Loading saved messages...</div>
+        <div class="empty-chat-state">Select a contact from the left to open a private chat.</div>
       </div>
 
       <form class="message-composer" id="messageForm">
         <button type="button" class="composer-btn" aria-label="Emoji">☺</button>
-        <input id="messageInput" type="text" placeholder="Type a message" autocomplete="off" aria-label="Message">
-        <button type="submit" class="send-btn" aria-label="Send">➤</button>
+        <input id="messageInput" type="text" placeholder="Type a message" autocomplete="off" aria-label="Message" disabled>
+        <button type="submit" class="send-btn" aria-label="Send" disabled>➤</button>
       </form>
     </section>
   </main>

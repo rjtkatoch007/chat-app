@@ -1,11 +1,11 @@
 # Chat App
 
-Vanilla JavaScript frontend + Node.js/Express/Sequelize/MySQL backend.
+Vanilla JavaScript frontend + Node.js/Express/Sequelize/MySQL backend with JWT authentication and Socket.IO private one-to-one chat rooms.
 
 ## Structure
 
 - `frontend/` - HTML, CSS and vanilla JavaScript UI
-- `backend/` - Express API, Sequelize models, authentication and chat-message APIs
+- `backend/` - Express API, Sequelize models, JWT authentication and Socket.IO server
 
 ## Backend setup
 
@@ -18,7 +18,7 @@ npm install
 npm run dev
 ```
 
-The API runs on `http://localhost:3000`.
+The API and Socket.IO server run on `http://localhost:3000`.
 
 ## Frontend setup
 
@@ -31,7 +31,7 @@ npm start
 
 Open `http://localhost:5500/index.html`.
 
-## Authentication APIs
+## Authentication
 
 ### POST `/user/signup`
 
@@ -44,7 +44,7 @@ Open `http://localhost:5500/index.html`.
 }
 ```
 
-Passwords are hashed with bcrypt before they are stored.
+Passwords are hashed with bcrypt before storage.
 
 ### POST `/user/login`
 
@@ -57,135 +57,167 @@ Use either email or phone in `identifier`:
 }
 ```
 
-Successful login returns a JWT token. The frontend stores that token in `localStorage` and sends it as a Bearer token for protected APIs.
+Successful login returns a JWT token. The frontend stores that token in `localStorage`.
 
-## Chat message database design
+## Socket.IO authentication
 
-The `chat_messages` table is created automatically by Sequelize and contains:
+The same JWT used by the REST API is reused for Socket.IO. The browser connects with:
 
-| Column | Type | Purpose |
-|---|---|---|
-| `id` | INTEGER | Unique message ID |
-| `sender_id` | INTEGER | ID of the user who sent the message; foreign key to `users.id` |
-| `message` | TEXT | Actual chat message |
-| `createdAt` | DATETIME | Message creation time |
-| `updatedAt` | DATETIME | Last update time |
-
-A `User` has many sent messages and each `ChatMessage` belongs to one `User`.
-
-## Chat message APIs
-
-All message APIs require the JWT returned by login.
-
-### POST `/message/send`
-
-Headers:
-
-```text
-Authorization: Bearer YOUR_JWT_TOKEN
-Content-Type: application/json
-```
-
-Body:
-
-```json
-{
-  "message": "Hello! How are you?"
-}
-```
-
-The backend gets the sender ID from the verified JWT (`req.user.id`), so the frontend cannot choose or spoof the sender ID.
-
-Example response:
-
-```json
-{
-  "message": "Chat message saved successfully",
-  "chatMessage": {
-    "id": 1,
-    "senderId": 1,
-    "message": "Hello! How are you?",
-    "createdAt": "2026-10-06T05:30:00.000Z"
-  }
-}
-```
-
-
-## Frontend integration
-
-When the user presses the send button:
-
-1. `chat.js` reads the message input.
-2. It sends `POST /message/send` with the JWT in the `Authorization` header.
-3. The backend verifies the JWT.
-4. The backend uses `req.user.id` as `senderId`.
-5. Sequelize inserts the message into `chat_messages`.
-6. The API returns the saved message and timestamp.
-7. The frontend adds the saved message to the chat UI.
-8. When the page is refreshed, `GET /message/my-messages` loads the stored messages again.
-
-The current scope stores messages against the sender. Receiver/conversation IDs can be added in the next phase when one-to-one chats are implemented.
-
-## Chat Messages
-
-All message endpoints require the JWT returned by login.
-
-- `GET /message/me` - identifies the currently logged-in user from the JWT and database.
-- `POST /message/send` - saves `{ "message": "Hello" }` with the logged-in user's ID as `senderId`.
-- `GET /message/all` - returns every stored message with `id`, `senderId`, `message`, and `createdAt`.
-
-The chat frontend calls `/message/me` to identify the actual logged-in user, then calls `/message/all` when the chat page loads. It polls `/message/all` every 2 seconds with `setInterval`, so new database messages appear without manually refreshing the page. The sidebar and conversation are built from database data; there are no hard-coded Alex/Priya/Rahul users or fake messages.
-
-
-## Real-time WebSocket chat
-
-The chat now uses native WebSockets through the `ws` Node.js package.
-
-- HTTP APIs continue to handle authentication, message persistence, and loading history.
-- The browser opens `ws://localhost:3000/ws` after login.
-- The JWT is sent as the first WebSocket message for authentication.
-- When `POST /message/send` successfully commits a message to MySQL, the backend broadcasts the saved message to every authenticated WebSocket client.
-- Every connected browser receives the message immediately without a refresh.
-- The frontend reconnects automatically if the WebSocket connection is lost.
-
-Install the new backend dependency after extracting the project:
-
-```bash
-cd backend
-npm install
-```
-
-The WebSocket endpoint is:
-
-```text
-ws://localhost:3000/ws
-```
-
-
-## Socket.IO
-
-The chat frontend connects to the backend with Socket.IO:
-
-```javascript
-const socket = io("http://localhost:3000", {
+```js
+io("http://localhost:3000", {
   auth: { token }
 });
 ```
 
-The backend authenticates the JWT during the Socket.IO handshake. New messages are saved to MySQL first and then emitted with the `new_message` event to connected users.
+The backend verifies the JWT in `io.use(...)`, loads the user from MySQL and attaches the verified identity to:
 
-Install the backend dependency with `npm install`.
+```js
+socket.user
+socket.userId
+```
 
-## Socket.IO Authentication
+Socket events therefore never trust a client-supplied `senderId`.
 
-The chat application reuses the JWT created during normal login for Socket.IO authentication.
+## Private one-to-one Socket.IO rooms
 
-1. The frontend reads the JWT from `localStorage`.
-2. Socket.IO sends it in the connection handshake:
-   `auth: { token }`.
-3. The backend Socket.IO middleware verifies the JWT using `JWT_SECRET`.
-4. The backend loads the corresponding user from MySQL.
-5. The authenticated user is attached to `socket.user` and `socket.userId`.
-6. When a message is sent, the backend uses `socket.userId` as `senderId`; the browser cannot choose another user's ID.
+The project now implements the private-chat room feature demonstrated in the reference video.
 
-This is the Socket.IO authentication layer required by the task. It does not create a second login system or a second token.
+### 1. Load real contacts
+
+The authenticated frontend calls:
+
+```text
+GET /user/all
+```
+
+The response contains registered users other than the logged-in user. The left sidebar can therefore search by name or email instead of displaying hardcoded users.
+
+### 2. Select a contact
+
+When a user selects another user, the frontend emits:
+
+```js
+socket.emit("join_chat", {
+  recipientId: selectedUserId
+});
+```
+
+The backend verifies that the target user exists and joins the socket to a deterministic room:
+
+```text
+private_chat:<smallerUserId>:<largerUserId>
+```
+
+For example, users 2 and 5 use:
+
+```text
+private_chat:2:5
+```
+
+This means both sides of the same conversation always enter the same room.
+
+### 3. Send a private message
+
+The frontend emits:
+
+```js
+socket.emit("send_message", {
+  message: "Hello",
+  recipientId: selectedUserId
+});
+```
+
+The backend checks that the authenticated socket has joined the corresponding room, then saves:
+
+- `sender_id` from `socket.userId`
+- `recipient_id` from the requested recipient
+- `message`
+
+Finally it emits only to that room:
+
+```js
+io.to(roomName).emit("new_message", savedMessage);
+```
+
+Therefore unrelated users do not receive the private message.
+
+### 4. Leave a private room
+
+When needed, the server supports:
+
+```js
+socket.emit("leave_chat");
+```
+
+Opening another conversation automatically leaves the previous private room and joins the new one.
+
+### 5. Reconnection
+
+If Socket.IO reconnects, the frontend automatically rejoins the currently selected private room.
+
+## Chat message database design
+
+The `chat_messages` table contains:
+
+| Column | Purpose |
+|---|---|
+| `id` | Unique message ID |
+| `sender_id` | Authenticated user who sent the message |
+| `recipient_id` | User receiving the private message |
+| `message` | Message text |
+| `createdAt` | Message creation time |
+| `updatedAt` | Last update time |
+
+`recipient_id` was added as a nullable field so an existing database containing older broadcast-style messages can still start successfully. New private messages always have a recipient.
+
+Because the app already runs `sequelize.sync({ alter: true })`, restart the backend after this version is installed so Sequelize can add the new `recipient_id` column.
+
+## Private conversation API
+
+### GET `/message/all?userId=<id>`
+
+Requires:
+
+```text
+Authorization: Bearer YOUR_JWT_TOKEN
+```
+
+The backend returns only messages exchanged between the authenticated user and the selected user.
+
+### POST `/message/send`
+
+The REST endpoint remains available for compatibility:
+
+```json
+{
+  "recipientId": 2,
+  "message": "Hello!"
+}
+```
+
+The sender is always taken from the verified JWT. The Socket.IO frontend uses the real-time `send_message` event instead.
+
+## Security rules
+
+- JWT is verified before a Socket.IO connection is accepted.
+- The database user is loaded from the verified JWT ID.
+- `senderId` is never trusted from the browser.
+- A socket can send only after joining the corresponding private room.
+- The server determines the actual room name.
+- Passwords are never returned by contact APIs.
+- Private messages are emitted to the relevant room rather than globally.
+
+## Reference-video features covered
+
+- Socket.IO connection
+- Socket.IO JWT authentication
+- Identification of the authenticated socket user
+- Real database users in the contact list
+- Search by user name/email
+- Private one-to-one chat room
+- Join room when a contact is selected
+- Leave the previous room when changing contacts
+- Database persistence for private messages
+- Real-time message delivery only to the private room
+- Conversation reload from MySQL after refresh
+- Automatic room rejoin after Socket.IO reconnection
