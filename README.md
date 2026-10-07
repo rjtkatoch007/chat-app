@@ -160,3 +160,18 @@ The WebSocket endpoint is:
 ```text
 ws://localhost:3000/ws
 ```
+
+
+## Socket.IO
+
+The chat frontend connects to the backend with Socket.IO:
+
+```javascript
+const socket = io("http://localhost:3000", {
+  auth: { token }
+});
+```
+
+The backend authenticates the JWT during the Socket.IO handshake. New messages are saved to MySQL first and then emitted with the `new_message` event to connected users.
+
+Install the backend dependency with `npm install`.

@@ -1,7 +1,7 @@
 const ChatMessage = require("../models/ChatMessage");
 const User = require("../models/User");
 const sequelize = require("../config/database");
-const { broadcastNewMessage } = require("../websocket");
+const { broadcastNewMessage } = require("../socket");
 
 // Get the actual logged-in user from the verified JWT and database.
 const getLoggedInUser = async (req, res) => {

@@ -25,7 +25,6 @@ let selectedUserId = null;
 let lastRenderedSignature = "";
 let isFirstMessageLoad = true;
 let chatSocket = null;
-let reconnectTimer = null;
 
 const initials = (name) => name?.trim().charAt(0).toUpperCase() || "U";
 
@@ -241,79 +240,59 @@ const renderChatList = () => {
   });
 };
 
-const connectWebSocket = () => {
-  if (chatSocket && (chatSocket.readyState === WebSocket.OPEN || chatSocket.readyState === WebSocket.CONNECTING)) {
+const connectSocketIO = () => {
+  if (typeof io === "undefined") {
+    console.error("Socket.IO client library was not loaded.");
+    showMessageStatus("Socket.IO client could not be loaded", "error");
     return;
   }
 
-  const wsProtocol = window.location.protocol === "https:" ? "wss:" : "ws:";
-  chatSocket = new WebSocket(`${wsProtocol}//localhost:3000/ws`);
-
-  chatSocket.addEventListener("open", () => {
-    console.log("[WS] Connected to chat server");
-
-    chatSocket.send(JSON.stringify({
-      type: "authenticate",
+  chatSocket = io("http://localhost:3000", {
+    auth: {
       token
-    }));
-  });
-
-  chatSocket.addEventListener("message", (event) => {
-    try {
-      const data = JSON.parse(event.data);
-
-      if (data.type === "authenticated") {
-        console.log("[WS] Authenticated as:", data.user);
-        return;
-      }
-
-      if (data.type !== "new_message" || !data.message) {
-        return;
-      }
-
-      const incoming = data.message;
-      const exists = allMessages.some(
-        (message) => Number(message.id) === Number(incoming.id)
-      );
-
-      if (exists) return;
-
-      allMessages.push(incoming);
-      allMessages.sort((a, b) => {
-        const timeDifference = new Date(a.createdAt) - new Date(b.createdAt);
-        return timeDifference || Number(a.id) - Number(b.id);
-      });
-
-      // The sender's own POST response and the WebSocket broadcast can arrive
-      // close together. The ID check above prevents duplicate bubbles.
-      lastRenderedSignature = allMessages
-        .map((message) => `${message.id}:${message.senderId}:${message.createdAt}:${message.message}`)
-        .join("|");
-
-      renderChatList();
-      renderMessages();
-
-      if (Number(incoming.senderId) !== Number(loggedInUser.id)) {
-        console.log("[WS] New live message received:", incoming);
-      }
-    } catch (error) {
-      console.error("[WS] Invalid server message:", error);
     }
   });
 
-  chatSocket.addEventListener("close", (event) => {
-    console.warn(`[WS] Connection closed (${event.code}). Reconnecting...`);
-
-    if (reconnectTimer) return;
-
-    reconnectTimer = setTimeout(() => {
-      reconnectTimer = null;
-      connectWebSocket();
-    }, 3000);
+  chatSocket.on("connect", () => {
+    console.log("[Socket.IO] Connected to http://localhost:3000");
   });
 
-  chatSocket.addEventListener("error", (error) => {
-    console.error("[WS] Connection error:", error);
+  chatSocket.on("authenticated", (data) => {
+    console.log("[Socket.IO] Authenticated as:", data.user);
+  });
+
+  chatSocket.on("connect_error", (error) => {
+    console.error("[Socket.IO] Connection error:", error.message);
+    showMessageStatus("Real-time connection unavailable", "error");
+  });
+
+  chatSocket.on("new_message", (incoming) => {
+    if (!incoming) return;
+
+    const exists = allMessages.some(
+      (message) => Number(message.id) === Number(incoming.id)
+    );
+
+    if (exists) return;
+
+    allMessages.push(incoming);
+    allMessages.sort((a, b) => {
+      const timeDifference = new Date(a.createdAt) - new Date(b.createdAt);
+      return timeDifference || Number(a.id) - Number(b.id);
+    });
+
+    lastRenderedSignature = allMessages
+      .map((message) => `${message.id}:${message.senderId}:${message.createdAt}:${message.message}`)
+      .join("|");
+
+    renderChatList();
+    renderMessages();
+
+    console.log("[Socket.IO] New live message received:", incoming);
+  });
+
+  chatSocket.on("disconnect", (reason) => {
+    console.warn("[Socket.IO] Disconnected:", reason);
   });
 };
 
@@ -371,32 +350,19 @@ messageForm.addEventListener("submit", async (event) => {
   messageInput.disabled = true;
 
   try {
-    const response = await fetch(`${API_URL}/message/send`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${token}`
-      },
-      body: JSON.stringify({ message: text })
+    if (!chatSocket || !chatSocket.connected) {
+      throw new Error("Real-time chat connection is not ready");
+    }
+
+    chatSocket.emit("send_message", { message: text }, (result) => {
+      if (!result?.success) {
+        showMessageStatus(result?.message || "Unable to send message", "error");
+        return;
+      }
+
+      console.log("Message saved through Socket.IO:", result.chatMessage);
+      messageInput.value = "";
     });
-
-    if (response.status === 401) {
-      handleUnauthorized();
-      return;
-    }
-
-    const data = await response.json();
-
-    if (!response.ok) {
-      throw new Error(data.message || "Unable to send message");
-    }
-
-    console.log("Message saved by backend:", data.chatMessage);
-    messageInput.value = "";
-
-    // Reload from DB immediately. setInterval will continue checking every 2 sec.
-    lastRenderedSignature = "";
-    await loadMessages();
   } catch (error) {
     console.error("Send message error:", error);
     showMessageStatus(error.message || "Unable to send message", "error");
@@ -416,7 +382,7 @@ chatSearch.addEventListener("input", () => {
 
 logoutButton.addEventListener("click", () => {
   if (chatSocket) {
-    chatSocket.close(1000, "User logged out");
+    chatSocket.disconnect();
   }
   localStorage.removeItem("token");
   localStorage.removeItem("user");
@@ -427,7 +393,7 @@ logoutButton.addEventListener("click", () => {
   try {
     await loadLoggedInUser();
     await loadMessages();
-    connectWebSocket();
+    connectSocketIO();
   } catch (error) {
     console.error("Chat initialization error:", error);
     showMessageStatus(error.message || "Unable to initialize chat", "error");

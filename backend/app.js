@@ -1,7 +1,7 @@
 const express = require("express");
 const cors = require("cors");
 const http = require("http");
-const { setupWebSocket } = require("./websocket");
+const { createSocketServer } = require("./socket");
 
 require("dotenv").config();
 
@@ -83,7 +83,7 @@ const startServer = async () => {
 
         const server = http.createServer(app);
 
-        setupWebSocket(server);
+        createSocketServer(server);
 
         server.listen(
             PORT,
@@ -93,7 +93,7 @@ const startServer = async () => {
                     `Server running at http://localhost:${PORT}`
                 );
                 console.log(
-                    `WebSocket endpoint: ws://localhost:${PORT}/ws`
+                    `Socket.IO endpoint: http://localhost:${PORT}`
                 );
 
             }
