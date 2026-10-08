@@ -96,7 +96,7 @@ const getGroupMessages = async (req, res) => {
       where: { groupId }, order: [["createdAt", "ASC"], ["id", "ASC"]],
       include: [{ model: User, as: "sender", attributes: ["id", "name"] }]
     });
-    res.json({ group, messages: messages.map((m) => ({ id: m.id, groupId: m.groupId, senderId: m.senderId, senderName: m.sender?.name || "Unknown user", message: m.message, mediaUrl: m.mediaUrl || null, mediaName: m.mediaName || null, mediaType: m.mediaType || null, mediaSize: m.mediaSize || null, createdAt: m.createdAt })) });
+    res.json({ group, messages: messages.map((m) => ({ id: m.id, groupId: m.groupId, senderId: m.senderId, senderName: m.sender?.name || "Unknown user", message: m.message, mediaUrl: m.mediaKey ? null : (m.mediaUrl || null), mediaKey: m.mediaKey || null, mediaChatType: m.mediaKey ? "group" : null, mediaName: m.mediaName || null, mediaType: m.mediaType || null, mediaSize: m.mediaSize || null, createdAt: m.createdAt })) });
   } catch (error) {
     console.error("Get group messages error:", error);
     res.status(500).json({ message: "Unable to fetch group messages" });

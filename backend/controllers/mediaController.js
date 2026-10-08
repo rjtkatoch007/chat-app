@@ -48,7 +48,7 @@ const uploadMedia = async (req, res) => {
       savedMessage = {
         id: message.id, roomId, senderId: sender.id, senderName: sender.name,
         recipientId: recipient.id, recipientName: recipient.name, message: "",
-        mediaUrl: upload.url, mediaName: req.file.originalname, mediaType: req.file.mimetype,
+        mediaUrl: null, mediaKey: upload.key, mediaChatType: "private", mediaName: req.file.originalname, mediaType: req.file.mimetype,
         mediaSize: req.file.size, createdAt: message.createdAt
       };
       io.to(roomId).emit("new_media_message", savedMessage);
@@ -74,7 +74,7 @@ const uploadMedia = async (req, res) => {
       });
       savedMessage = {
         id: message.id, groupId, senderId: sender.id, senderName: sender.name, message: "",
-        mediaUrl: upload.url, mediaName: req.file.originalname, mediaType: req.file.mimetype,
+        mediaUrl: null, mediaKey: upload.key, mediaChatType: "group", mediaName: req.file.originalname, mediaType: req.file.mimetype,
         mediaSize: req.file.size, createdAt: message.createdAt
       };
       io.to(roomId).emit("new_group_media_message", savedMessage);

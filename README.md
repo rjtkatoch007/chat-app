@@ -240,3 +240,12 @@ socket.on("new_group_media_message", (message) => {
 ```
 
 The backend verifies the sender/recipient or group membership before uploading and broadcasting, so clients cannot use the media endpoint to inject an attachment into a room they do not belong to.
+
+
+## Private S3 media access
+
+Chat media is stored in S3 as private objects. The backend stores the S3 object key and generates a short-lived (1 hour) presigned GET URL only after verifying that the authenticated user is a participant in the private chat or a member of the group.
+
+The IAM user used by the backend needs both `s3:PutObject` and `s3:GetObject` on `arn:aws:s3:::YOUR_BUCKET/chat-media/*`. Do not add a public `s3:GetObject` bucket policy.
+
+The frontend never receives AWS access keys. It requests a signed URL from the authenticated backend when an image, video, PDF, TXT, ZIP, Word, or Excel attachment is rendered/opened.

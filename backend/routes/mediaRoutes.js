@@ -2,6 +2,7 @@ const express = require("express");
 const multer = require("multer");
 const auth = require("../middleware/auth");
 const { uploadMedia, MAX_FILE_SIZE } = require("../controllers/mediaController");
+const { getMediaUrl } = require("../controllers/mediaAccessController");
 
 const router = express.Router();
 const upload = multer({
@@ -10,6 +11,7 @@ const upload = multer({
 });
 
 router.use(auth);
+
 router.post("/upload", (req, res, next) => {
   upload.single("file")(req, res, (error) => {
     if (error instanceof multer.MulterError) {
@@ -20,5 +22,8 @@ router.post("/upload", (req, res, next) => {
     next();
   });
 }, uploadMedia);
+
+// Returns a short-lived signed GET URL after checking chat/group authorization.
+router.get("/:chatType/:messageId/url", getMediaUrl);
 
 module.exports = router;

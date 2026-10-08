@@ -1,7 +1,8 @@
 const path = require("path");
 const crypto = require("crypto");
 const dotenv = require("dotenv");
-const { S3Client, PutObjectCommand } = require("@aws-sdk/client-s3");
+const { S3Client, PutObjectCommand, GetObjectCommand } = require("@aws-sdk/client-s3");
+const { getSignedUrl } = require("@aws-sdk/s3-request-presigner");
 
 // Always load the backend .env file explicitly, regardless of where
 // `node app.js` is launched from (backend/, project root, IDE, etc.).
@@ -56,9 +57,31 @@ const uploadToS3 = async ({ file, folder }) => {
     ContentLength: file.size
   }));
 
+  // Keep the bucket private. The stored URL is only a reference; clients
+  // must use getPresignedDownloadUrl() to access the object.
   const encodedKey = key.split("/").map(encodeURIComponent).join("/");
   const url = `https://${bucket}.s3.${region}.amazonaws.com/${encodedKey}`;
   return { key, url };
 };
 
-module.exports = { uploadToS3, safeFileName };
+const getPresignedDownloadUrl = async ({ key, contentType, fileName }) => {
+  const { bucket } = getConfig();
+  const client = getClient();
+  if (!key) throw new Error("Media object key is missing");
+
+  const safeName = safeFileName(fileName || "download");
+  const type = String(contentType || "application/octet-stream").toLowerCase();
+  const inline = type.startsWith("image/") || type.startsWith("video/") || type === "application/pdf" || type === "text/plain";
+  const disposition = `${inline ? "inline" : "attachment"}; filename=\"${safeName}\"`;
+
+  const command = new GetObjectCommand({
+    Bucket: bucket,
+    Key: key,
+    ResponseContentType: type,
+    ResponseContentDisposition: disposition
+  });
+
+  return getSignedUrl(client, command, { expiresIn: 3600 });
+};
+
+module.exports = { uploadToS3, getPresignedDownloadUrl, safeFileName };

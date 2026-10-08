@@ -27,6 +27,31 @@ async function api(path, options = {}) {
   return data;
 }
 
+const getSecureMediaUrl = async (m) => {
+  if (m._secureMediaUrl) return m._secureMediaUrl;
+  if (m.mediaUrl && /^https?:\/\//i.test(m.mediaUrl) && !m.mediaKey) return m.mediaUrl;
+  if (!m.mediaChatType || !m.id) throw new Error("Secure media information is missing");
+  const data = await api(`/media/${encodeURIComponent(m.mediaChatType)}/${encodeURIComponent(m.id)}/url`);
+  if (!data?.url || !/^https?:\/\//i.test(data.url)) throw new Error("Server returned an invalid secure media URL");
+  m._secureMediaUrl = data.url;
+  return data.url;
+};
+
+const addIncomingMessage = (incoming, { privateChat = false } = {}) => {
+  if (!incoming?.id) return false;
+  if (conversationMessages.some((m) => Number(m.id) === Number(incoming.id))) return false;
+  if (privateChat) {
+    if (!selectedUser) return false;
+    const expectedRoom = selectedRoomId || createPrivateRoomId(loggedInUser.email, selectedUser.email);
+    if (incoming.roomId !== expectedRoom) return false;
+  } else if (!selectedGroup || String(incoming.groupId) !== String(selectedGroup.id)) {
+    return false;
+  }
+  conversationMessages.push(incoming);
+  conversationMessages.sort((a,b) => new Date(a.createdAt)-new Date(b.createdAt));
+  return true;
+};
+
 const renderMessages = () => {
   messageArea.innerHTML = "";
   if (!selectedUser && !selectedGroup) { messageArea.innerHTML = '<div class="empty-chat-state">Choose a private chat or group.</div>'; return; }
@@ -35,25 +60,38 @@ const renderMessages = () => {
     const mine = Number(m.senderId) === Number(loggedInUser.id), wrapper = document.createElement("div"), bubble = document.createElement("div");
     wrapper.className = `message ${mine ? "sent" : "received"}`; wrapper.dataset.messageId = m.id; bubble.className = "bubble";
     if (selectedGroup && !mine) { const sender = document.createElement("strong"); sender.className = "message-sender"; sender.textContent = m.senderName || "Unknown"; bubble.appendChild(sender); }
-    if (m.mediaUrl) {
+    if (m.mediaKey || m.mediaUrl || m.mediaChatType) {
       const media = document.createElement("div");
       media.className = "media-attachment";
       const type = String(m.mediaType || "").toLowerCase();
-      if (type.startsWith("image/")) {
-        const image = document.createElement("img");
-        image.src = m.mediaUrl; image.alt = m.mediaName || "Shared image"; image.loading = "lazy";
-        media.appendChild(image);
-      } else if (type.startsWith("video/")) {
-        const video = document.createElement("video");
-        video.src = m.mediaUrl; video.controls = true; video.preload = "metadata";
-        media.appendChild(video);
-      } else {
-        const link = document.createElement("a");
-        link.href = m.mediaUrl; link.target = "_blank"; link.rel = "noopener noreferrer";
-        link.textContent = `📎 ${m.mediaName || "Download file"}`; link.className = "file-attachment";
-        media.appendChild(link);
-      }
+      const loading = document.createElement("span");
+      loading.className = "file-attachment";
+      loading.textContent = `🔒 Loading ${m.mediaName || "media"}...`;
+      media.appendChild(loading);
       bubble.appendChild(media);
+
+      getSecureMediaUrl(m).then((url) => {
+        if (!document.body.contains(media)) return;
+        loading.remove();
+        if (type.startsWith("image/")) {
+          const image = document.createElement("img");
+          image.src = url; image.alt = m.mediaName || "Shared image"; image.loading = "lazy";
+          media.appendChild(image);
+        } else if (type.startsWith("video/")) {
+          const video = document.createElement("video");
+          video.src = url; video.controls = true; video.preload = "metadata";
+          media.appendChild(video);
+        } else {
+          const link = document.createElement("a");
+          link.href = url; link.target = "_blank"; link.rel = "noopener noreferrer";
+          link.textContent = `📎 ${m.mediaName || "Open file"}`; link.className = "file-attachment";
+          media.appendChild(link);
+        }
+      }).catch((error) => {
+        loading.textContent = `⚠️ Unable to open ${m.mediaName || "media"}`;
+        loading.title = error.message;
+      });
+
       if (m.mediaName && type.startsWith("image/")) { const caption = document.createElement("div"); caption.className = "media-caption"; caption.textContent = m.mediaName; bubble.appendChild(caption); }
     }
     if (m.message) { const text = document.createElement("div"); text.textContent = m.message; bubble.appendChild(text); }
@@ -113,6 +151,13 @@ async function uploadMediaFile(file) {
     if (response.status === 401) return handleUnauthorized();
     const data = await response.json().catch(() => ({}));
     if (!response.ok) throw new Error(data.message || "Media upload failed");
+    if (data.chatMessage) {
+      const added = addIncomingMessage(data.chatMessage, { privateChat: !selectedGroup });
+      if (added) {
+        if (selectedUser) { recentChats.set(selectedUser.id, { ...selectedUser, lastMessage: data.chatMessage }); renderChatList(); }
+        renderMessages();
+      }
+    }
     showMessageStatus("Media sent", "info");
   } catch (error) {
     showMessageStatus(error.message, "error");
@@ -127,10 +172,10 @@ function connectSocketIO() {
   chatSocket.on("connect", async () => { try { if (selectedGroup) await joinGroupRoom(selectedGroup); else if (selectedUser) await joinPrivateRoom(selectedUser); } catch (e) { console.error(e); } });
   chatSocket.on("authenticated", ({ user }) => console.log("[Socket.IO] Authenticated", user));
   chatSocket.on("connect_error", (e) => showMessageStatus(`Socket.IO: ${e.message}`, "error"));
-  chatSocket.on("new_message", (incoming) => { if (!selectedUser || incoming.roomId !== selectedRoomId || conversationMessages.some((m) => Number(m.id) === Number(incoming.id))) return; conversationMessages.push(incoming); conversationMessages.sort((a,b) => new Date(a.createdAt)-new Date(b.createdAt)); recentChats.set(selectedUser.id, { ...selectedUser, lastMessage: incoming }); renderChatList(); renderMessages(); });
-  chatSocket.on("new_group_message", (incoming) => { if (!selectedGroup || incoming.groupId !== selectedGroup.id || conversationMessages.some((m) => Number(m.id) === Number(incoming.id))) return; conversationMessages.push(incoming); conversationMessages.sort((a,b) => new Date(a.createdAt)-new Date(b.createdAt)); renderMessages(); });
-  chatSocket.on("new_media_message", (incoming) => { if (!selectedUser || incoming.roomId !== selectedRoomId || conversationMessages.some((m) => Number(m.id) === Number(incoming.id))) return; conversationMessages.push(incoming); conversationMessages.sort((a,b) => new Date(a.createdAt)-new Date(b.createdAt)); recentChats.set(selectedUser.id, { ...selectedUser, lastMessage: incoming }); renderChatList(); renderMessages(); });
-  chatSocket.on("new_group_media_message", (incoming) => { if (!selectedGroup || incoming.groupId !== selectedGroup.id || conversationMessages.some((m) => Number(m.id) === Number(incoming.id))) return; conversationMessages.push(incoming); conversationMessages.sort((a,b) => new Date(a.createdAt)-new Date(b.createdAt)); renderMessages(); });
+  chatSocket.on("new_message", (incoming) => { if (!addIncomingMessage(incoming, { privateChat: true })) return; recentChats.set(selectedUser.id, { ...selectedUser, lastMessage: incoming }); renderChatList(); renderMessages(); });
+  chatSocket.on("new_group_message", (incoming) => { if (!addIncomingMessage(incoming)) return; renderMessages(); });
+  chatSocket.on("new_media_message", (incoming) => { if (!addIncomingMessage(incoming, { privateChat: true })) return; recentChats.set(selectedUser.id, { ...selectedUser, lastMessage: incoming }); renderChatList(); renderMessages(); });
+  chatSocket.on("new_group_media_message", (incoming) => { if (!addIncomingMessage(incoming)) return; renderMessages(); });
   chatSocket.on("group_member_joined", ({ groupId, userName }) => { if (selectedGroup?.id === groupId) showMessageStatus(`${userName} joined the group`); });
   chatSocket.on("group_member_left", ({ groupId, userName }) => { if (selectedGroup?.id === groupId) showMessageStatus(`${userName} left the group`); });
 }
