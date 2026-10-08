@@ -49,7 +49,7 @@ const registerGroupHandlers = (io, socket) => {
       if (!group) return ack?.({ success: false, message: "Group not found" });
 
       const saved = await sequelize.transaction((transaction) => GroupMessage.create({ groupId: id, senderId: socket.userId, message: text }, { transaction }));
-      const payload = { id: saved.id, groupId: id, senderId: socket.userId, senderName: socket.user.name, message: saved.message, createdAt: saved.createdAt };
+      const payload = { id: saved.id, groupId: id, senderId: socket.userId, senderName: socket.user.name, message: saved.message, mediaUrl: saved.mediaUrl || null, mediaName: saved.mediaName || null, mediaType: saved.mediaType || null, mediaSize: saved.mediaSize || null, createdAt: saved.createdAt };
       io.to(createGroupRoomId(id)).emit("new_group_message", payload);
       ack?.({ success: true, chatMessage: payload });
     } catch (error) {

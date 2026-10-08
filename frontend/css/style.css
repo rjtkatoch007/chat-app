@@ -260,3 +260,10 @@ a { text-decoration: none; }
 .message-status { font-size:.82rem; min-height:20px; padding:4px 14px; }
 .message-status[data-type="error"] { color:#b42318; }
 .message-status[data-type="info"] { color:#475467; }
+
+.media-attachment { margin: 2px 0 6px; }
+.media-attachment img, .media-attachment video { display:block; max-width: min(100%, 420px); max-height: 320px; border-radius: 8px; object-fit: contain; background: #111; }
+.file-attachment { display:flex; align-items:center; gap:8px; max-width: 360px; padding:10px 12px; border-radius:8px; background: rgba(255,255,255,.65); color: inherit; text-decoration:none; font-weight:600; overflow-wrap:anywhere; }
+.sent .file-attachment { background: rgba(255,255,255,.5); }
+.media-caption { margin-top:4px; color:#667781; font-size:11px; overflow-wrap:anywhere; }
+.composer-btn:disabled { opacity:.6; cursor:not-allowed; }

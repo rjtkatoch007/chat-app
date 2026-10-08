@@ -24,7 +24,7 @@
     <section class="conversation">
       <header class="conversation-header"><div class="avatar" id="contactAvatar">💬</div><div><strong id="contactName">Select a chat</strong><small id="contactStatus">Search a user or select a group</small></div></header>
       <div class="message-area" id="messageArea" aria-live="polite"><div class="empty-chat-state">Choose a private chat or group.</div></div>
-      <form class="message-composer" id="messageForm"><button type="button" class="composer-btn">☺</button><input id="messageInput" type="text" placeholder="Type a message" autocomplete="off" disabled><button type="submit" class="send-btn" disabled>➤</button></form>
+      <form class="message-composer" id="messageForm"><input type="file" id="mediaInput" class="d-none" accept="image/*,video/*,.pdf,.txt,.zip,.doc,.docx,.xls,.xlsx"><button type="button" class="composer-btn" id="mediaButton" title="Attach image, video or file">📎</button><input id="messageInput" type="text" placeholder="Type a message" autocomplete="off" disabled><button type="submit" class="send-btn" disabled>➤</button></form>
     </section>
   </main>
 

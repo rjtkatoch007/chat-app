@@ -1,9 +1,14 @@
+const path = require("path");
+const dotenv = require("dotenv");
+
+// Load the backend .env explicitly so startup does not depend on the shell
+// current working directory.
+dotenv.config({ path: path.resolve(__dirname, ".env") });
+
 const express = require("express");
 const cors = require("cors");
 const http = require("http");
 const { createSocketServer } = require("./socket");
-
-require("dotenv").config();
 
 const sequelize =
     require("./config/database");
@@ -17,6 +22,8 @@ const messageRoutes =
     require("./routes/messageRoutes");
 const groupRoutes =
     require("./routes/groupRoutes");
+const mediaRoutes =
+    require("./routes/mediaRoutes");
 const models = require("./models");
 
 const app = express();
@@ -60,6 +67,11 @@ app.use(
 app.use(
     "/group",
     groupRoutes
+);
+
+app.use(
+    "/media",
+    mediaRoutes
 );
 
 // Start server

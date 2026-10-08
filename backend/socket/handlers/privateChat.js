@@ -42,7 +42,7 @@ const registerPrivateHandlers = (io, socket) => {
       if (!expected || roomId !== expected || socket.currentPrivateRoom !== expected) return ack?.({ success: false, message: "Join the correct room before sending" });
 
       const saved = await sequelize.transaction((transaction) => ChatMessage.create({ senderId: socket.userId, recipientId: targetId, message: text }, { transaction }));
-      const payload = { id: saved.id, roomId: expected, senderId: socket.userId, senderName: socket.user.name, recipientId: targetId, recipientName: recipient.name, message: saved.message, createdAt: saved.createdAt };
+      const payload = { id: saved.id, roomId: expected, senderId: socket.userId, senderName: socket.user.name, recipientId: targetId, recipientName: recipient.name, message: saved.message, mediaUrl: saved.mediaUrl || null, mediaName: saved.mediaName || null, mediaType: saved.mediaType || null, mediaSize: saved.mediaSize || null, createdAt: saved.createdAt };
       io.to(expected).emit("new_message", payload);
       ack?.({ success: true, chatMessage: payload });
     } catch (error) {

@@ -11,6 +11,10 @@ const dto = (m) => ({
   recipientId: m.recipientId,
   recipientName: m.recipient?.name || "Unknown user",
   message: m.message,
+  mediaUrl: m.mediaUrl || null,
+  mediaName: m.mediaName || null,
+  mediaType: m.mediaType || null,
+  mediaSize: m.mediaSize || null,
   createdAt: m.createdAt
 });
 
@@ -39,7 +43,7 @@ const sendMessage = async (req, res) => {
       { senderId: sender.id, recipientId: recipient.id, message: text }, { transaction }
     ));
 
-    const saved = { id: message.id, senderId: sender.id, senderName: sender.name, recipientId: recipient.id, recipientName: recipient.name, message: message.message, createdAt: message.createdAt };
+    const saved = { id: message.id, senderId: sender.id, senderName: sender.name, recipientId: recipient.id, recipientName: recipient.name, message: message.message, mediaUrl: null, mediaName: null, mediaType: null, mediaSize: null, createdAt: message.createdAt };
     await broadcastNewMessage(saved);
     res.status(201).json({ message: "Chat message saved successfully", chatMessage: saved });
   } catch (error) {
