@@ -1,8 +1,7 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Chat | Chat App</title>
   <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
   <link rel="stylesheet" href="./css/style.css">
@@ -11,43 +10,27 @@
   <main class="chat-shell">
     <aside class="chat-sidebar">
       <header class="sidebar-header">
-        <div class="avatar" id="myAvatar">U</div>
-        <div class="sidebar-title">
-          <strong id="myName">Loading...</strong>
-          <small id="myEmail">Loading account...</small>
-        </div>
-        <button class="icon-btn" id="logoutButton" title="Logout" aria-label="Logout">↪</button>
+        <div class="avatar" id="myAvatar">U</div><div class="sidebar-title"><strong id="myName">Loading...</strong><small id="myEmail">Loading account...</small></div>
+        <button class="icon-btn" id="logoutButton" title="Logout">↪</button>
       </header>
-
-      <form class="search-box" id="emailSearchForm">
-        <span>⌕</span>
-        <input type="email" id="emailSearch" placeholder="Enter user's email" autocomplete="off" required>
-        <button type="submit" class="search-user-btn">Chat</button>
-      </form>
-      <small class="search-help">Enter a registered user's email to join their private room.</small>
+      <div class="sidebar-actions">
+        <button type="button" class="btn btn-sm btn-primary" id="newGroupButton">+ New group</button>
+        <button type="button" class="btn btn-sm btn-outline-secondary" id="joinGroupButton">Join group</button>
+      </div>
+      <form class="search-box" id="emailSearchForm"><span>⌕</span><input type="email" id="emailSearch" placeholder="Enter user's email" autocomplete="off" required><button type="submit" class="search-user-btn">Chat</button></form>
+      <small class="search-help">Private chat: enter a registered email. Groups are listed below.</small>
       <div class="chat-list" id="chatList"></div>
     </aside>
-
     <section class="conversation">
-      <header class="conversation-header">
-        <div class="avatar" id="contactAvatar">💬</div>
-        <div>
-          <strong id="contactName">Select a user</strong>
-          <small id="contactStatus">Search by email to start a private chat</small>
-        </div>
-      </header>
-
-      <div class="message-area" id="messageArea" aria-live="polite">
-        <div class="empty-chat-state">Search for a user's email to start chatting.</div>
-      </div>
-
-      <form class="message-composer" id="messageForm">
-        <button type="button" class="composer-btn" aria-label="Emoji">☺</button>
-        <input id="messageInput" type="text" placeholder="Type a message" autocomplete="off" aria-label="Message" disabled>
-        <button type="submit" class="send-btn" aria-label="Send" disabled>➤</button>
-      </form>
+      <header class="conversation-header"><div class="avatar" id="contactAvatar">💬</div><div><strong id="contactName">Select a chat</strong><small id="contactStatus">Search a user or select a group</small></div></header>
+      <div class="message-area" id="messageArea" aria-live="polite"><div class="empty-chat-state">Choose a private chat or group.</div></div>
+      <form class="message-composer" id="messageForm"><button type="button" class="composer-btn">☺</button><input id="messageInput" type="text" placeholder="Type a message" autocomplete="off" disabled><button type="submit" class="send-btn" disabled>➤</button></form>
     </section>
   </main>
+
+  <div class="modal fade" id="groupModal" tabindex="-1"><div class="modal-dialog"><div class="modal-content"><form id="groupForm"><div class="modal-header"><h5 class="modal-title">Create group</h5><button type="button" class="btn-close" data-bs-dismiss="modal"></button></div><div class="modal-body"><label class="form-label">Group name</label><input class="form-control mb-3" id="groupName" maxlength="100" required><label class="form-label">Member emails</label><textarea class="form-control" id="groupEmails" rows="4" placeholder="alice@example.com, bob@example.com"></textarea><div class="form-text">Separate registered emails with commas or new lines.</div></div><div class="modal-footer"><button type="submit" class="btn btn-primary">Create group</button></div></form></div></div></div>
+  <div class="modal fade" id="joinModal" tabindex="-1"><div class="modal-dialog modal-sm"><div class="modal-content"><form id="joinForm"><div class="modal-header"><h5 class="modal-title">Join group</h5><button type="button" class="btn-close" data-bs-dismiss="modal"></button></div><div class="modal-body"><label class="form-label">Invite code</label><input class="form-control" id="inviteCode" maxlength="24" required><div class="form-text">Ask a group member for the invite code.</div></div><div class="modal-footer"><button type="submit" class="btn btn-primary">Join</button></div></form></div></div></div>
+  <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
   <script src="https://cdn.socket.io/4.8.1/socket.io.min.js"></script>
   <script src="./js/chat.js"></script>
 </body>

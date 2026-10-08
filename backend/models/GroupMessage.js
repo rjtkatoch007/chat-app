@@ -1,15 +1,11 @@
 const { DataTypes } = require("sequelize");
 const sequelize = require("../config/database");
 
-const ChatMessage = sequelize.define("ChatMessage", {
+const GroupMessage = sequelize.define("GroupMessage", {
   id: { type: DataTypes.INTEGER, primaryKey: true, autoIncrement: true },
+  groupId: { type: DataTypes.UUID, allowNull: false, field: "group_id", references: { model: "chat_groups", key: "id" } },
   senderId: { type: DataTypes.INTEGER, allowNull: false, field: "sender_id", references: { model: "users", key: "id" } },
-  recipientId: { type: DataTypes.INTEGER, allowNull: false, field: "recipient_id", references: { model: "users", key: "id" } },
   message: { type: DataTypes.TEXT, allowNull: false, validate: { notEmpty: true } }
-}, {
-  tableName: "chat_messages",
-  timestamps: true
-});
+}, { tableName: "group_messages", timestamps: true });
 
-
-module.exports = ChatMessage;
+module.exports = GroupMessage;

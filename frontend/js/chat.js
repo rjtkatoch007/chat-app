@@ -1,305 +1,102 @@
 const API_URL = "http://localhost:3000";
 const token = localStorage.getItem("token");
+if (!token) { window.location.href = "./login.html"; throw new Error("User is not logged in"); }
 
-if (!token) {
-  window.location.href = "./login.html";
-  throw new Error("User is not logged in");
-}
-
-const myName = document.getElementById("myName");
-const myEmail = document.getElementById("myEmail");
-const myAvatar = document.getElementById("myAvatar");
-const contactName = document.getElementById("contactName");
-const contactAvatar = document.getElementById("contactAvatar");
-const contactStatus = document.getElementById("contactStatus");
-const messageArea = document.getElementById("messageArea");
-const messageForm = document.getElementById("messageForm");
-const messageInput = document.getElementById("messageInput");
-const sendButton = messageForm.querySelector(".send-btn");
-const emailSearchForm = document.getElementById("emailSearchForm");
-const emailSearch = document.getElementById("emailSearch");
-const chatList = document.getElementById("chatList");
-const logoutButton = document.getElementById("logoutButton");
-
-let loggedInUser = null;
-let selectedUser = null;
-let selectedRoomId = null;
-let conversationMessages = [];
-let chatSocket = null;
-const recentChats = new Map();
+const $ = (id) => document.getElementById(id);
+const myName = $("myName"), myEmail = $("myEmail"), myAvatar = $("myAvatar"), contactName = $("contactName"), contactAvatar = $("contactAvatar"), contactStatus = $("contactStatus");
+const messageArea = $("messageArea"), messageForm = $("messageForm"), messageInput = $("messageInput"), sendButton = messageForm.querySelector(".send-btn");
+const emailSearchForm = $("emailSearchForm"), emailSearch = $("emailSearch"), chatList = $("chatList"), logoutButton = $("logoutButton");
+let loggedInUser = null, selectedUser = null, selectedGroup = null, selectedRoomId = null, conversationMessages = [], chatSocket = null;
+const recentChats = new Map(), groups = new Map();
+let groupModal, joinModal;
 
 const initials = (name) => name?.trim().charAt(0).toUpperCase() || "U";
-
-// Both clients calculate the same room ID from the two normalized email
-// identifiers. Sorting makes User A -> User B identical to User B -> User A.
-const createRoomId = (emailA, emailB) => {
-  const emails = [emailA, emailB]
-    .map((email) => String(email || "").trim().toLowerCase());
-
-  if (!emails[0] || !emails[1] || emails[0] === emails[1]) return null;
-
-  emails.sort();
-  return `private_${emails[0]}__${emails[1]}`;
-};
-
-const handleUnauthorized = () => {
-  chatSocket?.disconnect();
-  localStorage.removeItem("token");
-  localStorage.removeItem("user");
-  window.location.href = "./login.html";
-};
-
-const showMessageStatus = (text, type = "info") => {
-  let status = document.getElementById("messageStatus");
-  if (!status) {
-    status = document.createElement("div");
-    status.id = "messageStatus";
-    status.className = "message-status";
-    messageForm.before(status);
-  }
-  status.textContent = text;
-  status.dataset.type = type;
-  if (text) setTimeout(() => { if (status.textContent === text) status.textContent = ""; }, 3000);
-};
-
-const formatTime = (dateValue) => dateValue
-  ? new Date(dateValue).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })
-  : "";
-
+const createPrivateRoomId = (a, b) => { const values = [a, b].map((x) => String(x || "").trim().toLowerCase()); if (!values[0] || !values[1] || values[0] === values[1]) return null; values.sort(); return `private_${values[0]}__${values[1]}`; };
+const groupRoomId = (id) => id ? `group:${id}` : null;
+const authHeaders = () => ({ Authorization: `Bearer ${token}`, "Content-Type": "application/json" });
+const handleUnauthorized = () => { chatSocket?.disconnect(); localStorage.removeItem("token"); localStorage.removeItem("user"); window.location.href = "./login.html"; };
+const showMessageStatus = (text, type = "info") => { let el = $("messageStatus"); if (!el) { el = document.createElement("div"); el.id = "messageStatus"; el.className = "message-status"; messageForm.before(el); } el.textContent = text; el.dataset.type = type; if (text) setTimeout(() => { if (el.textContent === text) el.textContent = ""; }, 3500); };
+const formatTime = (v) => v ? new Date(v).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }) : "";
 const scrollToBottom = () => { messageArea.scrollTop = messageArea.scrollHeight; };
 
-const loadLoggedInUser = async () => {
-  const response = await fetch(`${API_URL}/message/me`, {
-    headers: { Authorization: `Bearer ${token}` }
-  });
+async function api(path, options = {}) {
+  const response = await fetch(`${API_URL}${path}`, { ...options, headers: { ...authHeaders(), ...(options.headers || {}) } });
   if (response.status === 401) return handleUnauthorized();
-  const data = await response.json();
-  if (!response.ok) throw new Error(data.message || "Unable to identify logged-in user");
-
-  loggedInUser = data.user;
-  localStorage.setItem("user", JSON.stringify(loggedInUser));
-  myName.textContent = loggedInUser.name;
-  myEmail.textContent = loggedInUser.email;
-  myAvatar.textContent = initials(loggedInUser.name);
-};
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(data.message || "Request failed");
+  return data;
+}
 
 const renderMessages = () => {
   messageArea.innerHTML = "";
-  if (!selectedUser) {
-    messageArea.innerHTML = '<div class="empty-chat-state">Search for a user email to start chatting.</div>';
-    return;
-  }
-  if (!conversationMessages.length) {
-    const empty = document.createElement("div");
-    empty.className = "empty-chat-state";
-    empty.textContent = `No messages with ${selectedUser.name} yet.`;
-    messageArea.appendChild(empty);
-    return;
-  }
-
-  conversationMessages.forEach((message) => {
-    const mine = Number(message.senderId) === Number(loggedInUser.id);
-    const wrapper = document.createElement("div");
-    wrapper.className = `message ${mine ? "sent" : "received"}`;
-    wrapper.dataset.messageId = message.id;
-
-    const bubble = document.createElement("div");
-    bubble.className = "bubble";
-    if (!mine) {
-      const sender = document.createElement("strong");
-      sender.className = "message-sender";
-      sender.textContent = message.senderName || selectedUser.name;
-      bubble.appendChild(sender);
-    }
-
-    const text = document.createElement("div");
-    text.textContent = message.message;
-    const time = document.createElement("time");
-    time.textContent = mine ? `${formatTime(message.createdAt)} ✓✓` : formatTime(message.createdAt);
-    bubble.append(text, time);
-    wrapper.appendChild(bubble);
-    messageArea.appendChild(wrapper);
+  if (!selectedUser && !selectedGroup) { messageArea.innerHTML = '<div class="empty-chat-state">Choose a private chat or group.</div>'; return; }
+  if (!conversationMessages.length) { const e = document.createElement("div"); e.className = "empty-chat-state"; e.textContent = selectedGroup ? `No messages in ${selectedGroup.name} yet.` : `No messages with ${selectedUser.name} yet.`; messageArea.appendChild(e); return; }
+  conversationMessages.forEach((m) => {
+    const mine = Number(m.senderId) === Number(loggedInUser.id), wrapper = document.createElement("div"), bubble = document.createElement("div");
+    wrapper.className = `message ${mine ? "sent" : "received"}`; wrapper.dataset.messageId = m.id; bubble.className = "bubble";
+    if (selectedGroup && !mine) { const sender = document.createElement("strong"); sender.className = "message-sender"; sender.textContent = m.senderName || "Unknown"; bubble.appendChild(sender); }
+    const text = document.createElement("div"), time = document.createElement("time"); text.textContent = m.message; time.textContent = formatTime(m.createdAt) + (mine ? " ✓✓" : ""); bubble.append(text, time); wrapper.appendChild(bubble); messageArea.appendChild(wrapper);
   });
   scrollToBottom();
 };
 
-const renderRecentChats = () => {
+const renderChatList = () => {
   chatList.innerHTML = "";
-  if (!recentChats.size) {
-    chatList.innerHTML = '<div class="empty-chat-state">Your searched users will appear here.</div>';
-    return;
-  }
-
-  [...recentChats.values()].forEach((user) => {
-    const button = document.createElement("button");
-    button.type = "button";
-    button.className = "chat-item";
-    if (selectedUser && Number(selectedUser.id) === Number(user.id)) button.classList.add("active");
-
-    const avatar = document.createElement("div");
-    avatar.className = "avatar";
-    avatar.textContent = initials(user.name);
-
-    const content = document.createElement("div");
-    content.className = "chat-item-content";
-    const top = document.createElement("div");
-    top.className = "chat-item-top";
-    const name = document.createElement("strong");
-    name.textContent = user.name;
-    const time = document.createElement("time");
-    time.textContent = user.lastMessage ? formatTime(user.lastMessage.createdAt) : "";
-    const preview = document.createElement("div");
-    preview.className = "chat-preview";
-    preview.textContent = user.lastMessage?.message || user.email;
-    top.append(name, time);
-    content.append(top, preview);
-    button.append(avatar, content);
-    button.addEventListener("click", () => openPrivateChat(user));
-    chatList.appendChild(button);
+  const title = document.createElement("div"); title.className = "list-section-title"; title.textContent = "Groups"; chatList.appendChild(title);
+  if (!groups.size) { const empty = document.createElement("div"); empty.className = "chat-preview px-2 pb-2"; empty.textContent = "No groups yet."; chatList.appendChild(empty); }
+  groups.forEach((group) => {
+    const button = document.createElement("button"); button.type = "button"; button.className = "chat-item"; if (selectedGroup?.id === group.id) button.classList.add("active");
+    const avatar = document.createElement("div"); avatar.className = "avatar"; avatar.textContent = "👥";
+    const content = document.createElement("div"); content.className = "chat-item-content"; const top = document.createElement("div"); top.className = "chat-item-top"; const name = document.createElement("strong"); name.textContent = group.name; const time = document.createElement("time"); time.textContent = "Group"; const preview = document.createElement("div"); preview.className = "chat-preview"; preview.textContent = `${group.memberCount || 0} members`;
+    top.append(name, time); content.append(top, preview); button.append(avatar, content); button.addEventListener("click", () => openGroupChat(group)); chatList.appendChild(button);
+  });
+  const sep = document.createElement("div"); sep.className = "list-section-title mt-2"; sep.textContent = "Private chats"; chatList.appendChild(sep);
+  if (!recentChats.size) { const empty = document.createElement("div"); empty.className = "chat-preview px-2 pb-2"; empty.textContent = "Your searched users appear here."; chatList.appendChild(empty); }
+  recentChats.forEach((user) => {
+    const button = document.createElement("button"); button.type = "button"; button.className = "chat-item"; if (selectedUser?.id === user.id) button.classList.add("active");
+    const avatar = document.createElement("div"); avatar.className = "avatar"; avatar.textContent = initials(user.name); const content = document.createElement("div"); content.className = "chat-item-content"; const top = document.createElement("div"); top.className = "chat-item-top"; const name = document.createElement("strong"); name.textContent = user.name; const time = document.createElement("time"); time.textContent = user.lastMessage ? formatTime(user.lastMessage.createdAt) : ""; const preview = document.createElement("div"); preview.className = "chat-preview"; preview.textContent = user.lastMessage?.message || user.email; top.append(name, time); content.append(top, preview); button.append(avatar, content); button.addEventListener("click", () => openPrivateChat(user)); chatList.appendChild(button);
   });
 };
 
-const searchUserByEmail = async (email) => {
-  const response = await fetch(`${API_URL}/user/search?email=${encodeURIComponent(email)}`, {
-    headers: { Authorization: `Bearer ${token}` }
-  });
-  if (response.status === 401) return handleUnauthorized();
-  const data = await response.json();
-  if (!response.ok) throw new Error(data.message || "User not found");
-  return data.user;
-};
+async function loadLoggedInUser() { const data = await api("/message/me", { headers: { Authorization: `Bearer ${token}` } }); loggedInUser = data.user; myName.textContent = loggedInUser.name; myEmail.textContent = loggedInUser.email; myAvatar.textContent = initials(loggedInUser.name); }
+async function loadGroups() { const data = await api("/group"); groups.clear(); (data.groups || []).forEach((g) => groups.set(g.id, g)); renderChatList(); }
+async function searchUserByEmail(email) { return (await api(`/user/search?email=${encodeURIComponent(email)}`)).user; }
+async function loadPrivateConversation(user) { const data = await api(`/message/all?userId=${encodeURIComponent(user.id)}`); conversationMessages = data.messages || []; selectedRoomId = data.roomId || createPrivateRoomId(loggedInUser.email, user.email); renderMessages(); }
+async function loadGroupConversation(group) { const data = await api(`/group/${encodeURIComponent(group.id)}/messages`); conversationMessages = data.messages || []; selectedRoomId = groupRoomId(group.id); renderMessages(); }
 
-const loadConversation = async (user) => {
-  const response = await fetch(`${API_URL}/message/all?userId=${encodeURIComponent(user.id)}`, {
-    headers: { Authorization: `Bearer ${token}` }
-  });
-  if (response.status === 401) return handleUnauthorized();
-  const data = await response.json();
-  if (!response.ok) throw new Error(data.message || "Unable to load conversation");
-  conversationMessages = Array.isArray(data.messages) ? data.messages : [];
-  selectedRoomId = data.roomId || createRoomId(loggedInUser.email, user.email);
-  renderMessages();
-};
+function joinPrivateRoom(user) { return new Promise((resolve, reject) => { if (!chatSocket?.connected) return reject(new Error("Socket.IO connection is not ready")); const roomId = createPrivateRoomId(loggedInUser.email, user.email); chatSocket.emit("join_room", { roomId, recipientId: user.id }, (result) => result?.success ? resolve(result) : reject(new Error(result?.message || "Unable to join private room"))); }); }
+function joinGroupRoom(group) { return new Promise((resolve, reject) => { if (!chatSocket?.connected) return reject(new Error("Socket.IO connection is not ready")); chatSocket.emit("join_group", { groupId: group.id }, (result) => result?.success ? resolve(result) : reject(new Error(result?.message || "Unable to join group"))); }); }
 
-const joinRoom = (user) => new Promise((resolve, reject) => {
-  if (!chatSocket?.connected) return reject(new Error("Socket.IO connection is not ready"));
+async function openPrivateChat(user) {
+  try { selectedGroup = null; selectedUser = user; contactName.textContent = user.name; contactAvatar.textContent = initials(user.name); contactStatus.textContent = user.email; messageInput.disabled = sendButton.disabled = true; renderChatList(); await joinPrivateRoom(user); await loadPrivateConversation(user); messageInput.disabled = sendButton.disabled = false; messageInput.focus(); } catch (e) { showMessageStatus(e.message, "error"); }
+}
+async function openGroupChat(group) {
+  try { selectedUser = null; selectedGroup = group; contactName.textContent = group.name; contactAvatar.textContent = "👥"; contactStatus.textContent = `${group.memberCount || 0} members • invite code available to group members`; messageInput.disabled = sendButton.disabled = true; renderChatList(); await joinGroupRoom(group); await loadGroupConversation(group); messageInput.disabled = sendButton.disabled = false; messageInput.focus(); } catch (e) { showMessageStatus(e.message, "error"); }
+}
 
-  const roomId = createRoomId(loggedInUser.email, user.email);
-  if (!roomId) return reject(new Error("Unable to create a private room"));
+function connectSocketIO() {
+  chatSocket = io(API_URL, { auth: { token }, reconnection: true, reconnectionAttempts: Infinity });
+  chatSocket.on("connect", async () => { try { if (selectedGroup) await joinGroupRoom(selectedGroup); else if (selectedUser) await joinPrivateRoom(selectedUser); } catch (e) { console.error(e); } });
+  chatSocket.on("authenticated", ({ user }) => console.log("[Socket.IO] Authenticated", user));
+  chatSocket.on("connect_error", (e) => showMessageStatus(`Socket.IO: ${e.message}`, "error"));
+  chatSocket.on("new_message", (incoming) => { if (!selectedUser || incoming.roomId !== selectedRoomId || conversationMessages.some((m) => Number(m.id) === Number(incoming.id))) return; conversationMessages.push(incoming); conversationMessages.sort((a,b) => new Date(a.createdAt)-new Date(b.createdAt)); recentChats.set(selectedUser.id, { ...selectedUser, lastMessage: incoming }); renderChatList(); renderMessages(); });
+  chatSocket.on("new_group_message", (incoming) => { if (!selectedGroup || incoming.groupId !== selectedGroup.id || conversationMessages.some((m) => Number(m.id) === Number(incoming.id))) return; conversationMessages.push(incoming); conversationMessages.sort((a,b) => new Date(a.createdAt)-new Date(b.createdAt)); renderMessages(); });
+  chatSocket.on("group_member_joined", ({ groupId, userName }) => { if (selectedGroup?.id === groupId) showMessageStatus(`${userName} joined the group`); });
+  chatSocket.on("group_member_left", ({ groupId, userName }) => { if (selectedGroup?.id === groupId) showMessageStatus(`${userName} left the group`); });
+}
 
-  // Required assignment event: join_room sends the deterministic room ID to the server.
-  // The server independently verifies the recipient and recalculates the room ID.
-  chatSocket.emit("join_room", { roomId, recipientId: user.id }, (result) => {
-    if (!result?.success) return reject(new Error(result?.message || "Unable to join room"));
-    selectedRoomId = result.roomId;
-    resolve(result);
-  });
-});
-
-const openPrivateChat = async (user) => {
-  try {
-    selectedUser = user;
-    contactName.textContent = user.name;
-    contactAvatar.textContent = initials(user.name);
-    contactStatus.textContent = user.email;
-    messageInput.disabled = true;
-    sendButton.disabled = true;
-    renderRecentChats();
-
-    await joinRoom(user);
-    await loadConversation(user);
-
-    messageInput.disabled = false;
-    sendButton.disabled = false;
-    messageInput.focus();
-  } catch (error) {
-    console.error("Open private chat error:", error);
-    showMessageStatus(error.message, "error");
-  }
-};
-
-const connectSocketIO = () => {
-  chatSocket = io(API_URL, { auth: { token } });
-
-  chatSocket.on("connect", async () => {
-    console.log("[Socket.IO] Connected:", chatSocket.id);
-    if (selectedUser) {
-      try { await joinRoom(selectedUser); } catch (error) { console.error(error); }
-    }
-  });
-
-  chatSocket.on("authenticated", ({ user }) => console.log("[Socket.IO] Authenticated:", user));
-
-  chatSocket.on("connect_error", (error) => {
-    console.error("[Socket.IO] Connection error:", error.message);
-    showMessageStatus("Socket.IO authentication/connection failed", "error");
-  });
-
-  // Required assignment event: receive new messages from the joined room.
-  chatSocket.on("new_message", (incoming) => {
-    if (!selectedUser || incoming.roomId !== selectedRoomId) return;
-    if (conversationMessages.some((m) => Number(m.id) === Number(incoming.id))) return;
-
-    conversationMessages.push(incoming);
-    conversationMessages.sort((a, b) => new Date(a.createdAt) - new Date(b.createdAt));
-    recentChats.set(selectedUser.id, { ...selectedUser, lastMessage: incoming });
-    renderRecentChats();
-    renderMessages();
-  });
-};
-
-emailSearchForm.addEventListener("submit", async (event) => {
-  event.preventDefault();
-  const email = emailSearch.value.trim().toLowerCase();
-  if (!email) return;
-
-  try {
-    const user = await searchUserByEmail(email);
-    recentChats.set(user.id, { ...user, lastMessage: null });
-    renderRecentChats();
-    emailSearch.value = user.email;
-    await openPrivateChat(user);
-  } catch (error) {
-    showMessageStatus(error.message || "No user found with this email", "error");
-  }
-});
-
+emailSearchForm.addEventListener("submit", async (event) => { event.preventDefault(); try { const user = await searchUserByEmail(emailSearch.value.trim().toLowerCase()); recentChats.set(user.id, { ...user, lastMessage: null }); emailSearch.value = user.email; renderChatList(); await openPrivateChat(user); } catch (e) { showMessageStatus(e.message, "error"); } });
 messageForm.addEventListener("submit", (event) => {
-  event.preventDefault();
-  const text = messageInput.value.trim();
-  if (!text || !selectedUser || !selectedRoomId) return;
-  if (!chatSocket?.connected) return showMessageStatus("Socket.IO is not connected", "error");
-
-  sendButton.disabled = true;
-  messageInput.disabled = true;
-
-  chatSocket.emit("send_message", {
-    roomId: selectedRoomId,
-    recipientId: selectedUser.id,
-    message: text
-  }, (result) => {
-    if (!result?.success) showMessageStatus(result?.message || "Unable to send message", "error");
-    else messageInput.value = "";
-    sendButton.disabled = false;
-    messageInput.disabled = false;
-    messageInput.focus();
-  });
+  event.preventDefault(); const text = messageInput.value.trim(); if (!text || !chatSocket?.connected) return;
+  const eventName = selectedGroup ? "send_group_message" : "send_message"; const payload = selectedGroup ? { groupId: selectedGroup.id, message: text } : { roomId: selectedRoomId, recipientId: selectedUser.id, message: text };
+  chatSocket.emit(eventName, payload, (result) => { if (!result?.success) showMessageStatus(result?.message || "Unable to send message", "error"); else messageInput.value = ""; });
 });
+messageInput.addEventListener("input", () => { if (!chatSocket?.connected) return; if (selectedGroup) chatSocket.emit("typing", { groupId: selectedGroup.id, isTyping: messageInput.value.length > 0 }); else if (selectedRoomId) chatSocket.emit("typing", { roomId: selectedRoomId, isTyping: messageInput.value.length > 0 }); });
+logoutButton.addEventListener("click", () => handleUnauthorized());
 
-logoutButton.addEventListener("click", () => {
-  chatSocket?.disconnect();
-  localStorage.removeItem("token");
-  localStorage.removeItem("user");
-  window.location.href = "./login.html";
-});
+$("newGroupButton").addEventListener("click", () => { if (!groupModal) groupModal = new bootstrap.Modal($("groupModal")); $("groupName").value = ""; $("groupEmails").value = ""; groupModal.show(); });
+$("joinGroupButton").addEventListener("click", () => { if (!joinModal) joinModal = new bootstrap.Modal($("joinModal")); $("inviteCode").value = ""; joinModal.show(); });
+$("groupForm").addEventListener("submit", async (event) => { event.preventDefault(); try { const emails = $("groupEmails").value.split(/[,\n]/).map((x) => x.trim()).filter(Boolean); const data = await api("/group", { method: "POST", body: JSON.stringify({ name: $("groupName").value, emails }) }); groups.set(data.group.id, data.group); groupModal.hide(); renderChatList(); await openGroupChat(data.group); showMessageStatus(`Group created. Invite code: ${data.group.inviteCode}`); } catch (e) { showMessageStatus(e.message, "error"); } });
+$("joinForm").addEventListener("submit", async (event) => { event.preventDefault(); try { const data = await api(`/group/join/${encodeURIComponent($("inviteCode").value.trim())}`, { method: "POST" }); groups.set(data.group.id, data.group); joinModal.hide(); renderChatList(); await openGroupChat(data.group); showMessageStatus(`Joined ${data.group.name}`); } catch (e) { showMessageStatus(e.message, "error"); } });
 
-(async () => {
-  try {
-    await loadLoggedInUser();
-    renderRecentChats();
-    connectSocketIO();
-  } catch (error) {
-    console.error("Chat initialization error:", error);
-    showMessageStatus(error.message || "Unable to initialize chat", "error");
-  }
-})();
+(async function init() { try { await loadLoggedInUser(); await loadGroups(); connectSocketIO(); } catch (e) { console.error(e); showMessageStatus(e.message, "error"); } })();

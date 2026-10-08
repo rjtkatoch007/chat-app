@@ -253,3 +253,10 @@ a { text-decoration: none; }
   color: #128c7e;
   font-size: 12px;
 }
+
+.sidebar-actions { display:flex; gap:8px; padding:10px 14px 4px; }
+.sidebar-actions .btn { flex:1; }
+.list-section-title { font-size:.72rem; font-weight:700; text-transform:uppercase; letter-spacing:.06em; padding:12px 12px 6px; opacity:.65; }
+.message-status { font-size:.82rem; min-height:20px; padding:4px 14px; }
+.message-status[data-type="error"] { color:#b42318; }
+.message-status[data-type="info"] { color:#475467; }

@@ -55,3 +55,34 @@ npm start
 
 Backend: `http://localhost:3000`
 Frontend: `http://localhost:5500`
+
+
+## Group Chat + Socket.IO best practices
+
+The project now supports authenticated group chat in addition to deterministic email-based private rooms.
+
+### Group flow
+1. Create a group with a name and registered member emails.
+2. The server creates a UUID group ID and secure invite code, and persists memberships.
+3. Share the invite code with another registered user.
+4. A user joins with the invite code; membership is persisted before Socket.IO access is allowed.
+5. Group messages are persisted in `group_messages` and broadcast only to `group:<groupId>`.
+
+### Socket.IO practices used
+- Authentication middleware runs before `connection`.
+- Event handlers are separated into private/group modules.
+- Server recalculates/validates room identity instead of trusting the client.
+- Group membership is checked before `join_group` and `send_group_message`.
+- Acknowledgement callbacks return explicit success/error results.
+- Room-scoped broadcasts use `io.to(room).emit(...)`; join/leave notifications use `socket.to(room).emit(...)`.
+- Reconnection re-joins the currently selected room from the client.
+- A `Map<userId, Set<socketId>>` tracks active connections and is cleaned on disconnect.
+- Message payloads are validated and length-limited before database writes.
+
+### API
+- `GET /group` — groups for the authenticated user
+- `POST /group` — create group (`name`, `emails[]`)
+- `POST /group/join/:inviteCode` — join group
+- `GET /group/:groupId/messages` — group history (membership required)
+
+Database startup uses Sequelize `sync({ alter: true })`, so the new group tables are created/updated alongside the existing tables.

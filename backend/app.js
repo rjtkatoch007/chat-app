@@ -10,13 +10,14 @@ const sequelize =
 
 const User =
     require("./models/User");
-const ChatMessage =
-    require("./models/ChatMessage");
 
 const userRoutes =
     require("./routes/userRoutes");
 const messageRoutes =
     require("./routes/messageRoutes");
+const groupRoutes =
+    require("./routes/groupRoutes");
+const models = require("./models");
 
 const app = express();
 
@@ -54,6 +55,11 @@ app.use(
 app.use(
     "/message",
     messageRoutes
+);
+
+app.use(
+    "/group",
+    groupRoutes
 );
 
 // Start server
