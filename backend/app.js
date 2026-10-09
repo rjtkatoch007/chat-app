@@ -25,6 +25,7 @@ const groupRoutes =
 const mediaRoutes =
     require("./routes/mediaRoutes");
 const models = require("./models");
+const { startArchiveScheduler } = require("./services/messageArchiver");
 
 const app = express();
 
@@ -91,6 +92,10 @@ const startServer = async () => {
         console.log(
             "Database tables are ready"
         );
+
+        // Tables for archived private/group messages are created by Sequelize sync.
+        // The scheduler runs nightly in the server's timezone (default 02:00).
+        startArchiveScheduler();
 
 
         const server = http.createServer(app);

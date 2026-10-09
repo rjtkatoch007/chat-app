@@ -1,4 +1,4 @@
-const { ChatMessage, GroupMessage, GroupMember } = require("../models");
+const { ChatMessage, GroupMessage, ArchivedChatMessage, ArchivedGroupMessage, GroupMember } = require("../models");
 const { getPresignedDownloadUrl } = require("../services/mediaStorage");
 
 const getMediaUrl = async (req, res) => {
@@ -14,9 +14,9 @@ const getMediaUrl = async (req, res) => {
     let mediaName;
 
     if (chatType === "private") {
-      const message = await ChatMessage.findByPk(messageId, {
-        attributes: ["id", "senderId", "recipientId", "mediaKey", "mediaType", "mediaName"]
-      });
+      const attributes = ["id", "senderId", "recipientId", "mediaKey", "mediaType", "mediaName"];
+      const message = await ChatMessage.findByPk(messageId, { attributes })
+        || await ArchivedChatMessage.findByPk(messageId, { attributes });
       if (!message) return res.status(404).json({ message: "Media message not found" });
       const userId = Number(req.user.id);
       if (Number(message.senderId) !== userId && Number(message.recipientId) !== userId) {
@@ -26,9 +26,9 @@ const getMediaUrl = async (req, res) => {
       mediaType = message.mediaType;
       mediaName = message.mediaName;
     } else if (chatType === "group") {
-      const message = await GroupMessage.findByPk(messageId, {
-        attributes: ["id", "groupId", "mediaKey", "mediaType", "mediaName"]
-      });
+      const attributes = ["id", "groupId", "mediaKey", "mediaType", "mediaName"];
+      const message = await GroupMessage.findByPk(messageId, { attributes })
+        || await ArchivedGroupMessage.findByPk(messageId, { attributes });
       if (!message) return res.status(404).json({ message: "Media message not found" });
       const membership = await GroupMember.findOne({
         where: { groupId: message.groupId, userId: req.user.id },

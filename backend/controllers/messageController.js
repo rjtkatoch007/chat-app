@@ -1,5 +1,6 @@
 const { Op } = require("sequelize");
 const ChatMessage = require("../models/ChatMessage");
+const ArchivedChatMessage = require("../models/ArchivedChatMessage");
 const User = require("../models/User");
 const sequelize = require("../config/database");
 const { broadcastNewMessage, getPrivateRoomId } = require("../socket");
@@ -63,18 +64,25 @@ const getAllMessages = async (req, res) => {
     const currentUser = await User.findByPk(currentUserId, { attributes: ["id", "email"] });
     if (!currentUser) return res.status(401).json({ message: "Logged-in user was not found" });
 
-    const messages = await ChatMessage.findAll({
-      where: {
-        [Op.or]: [
-          { senderId: currentUserId, recipientId },
-          { senderId: recipientId, recipientId: currentUserId }
-        ]
-      },
-      order: [["createdAt", "ASC"], ["id", "ASC"]],
-      include: [
-        { model: User, as: "sender", attributes: ["id", "name"] },
-        { model: User, as: "recipient", attributes: ["id", "name"] }
+    const conversationWhere = {
+      [Op.or]: [
+        { senderId: currentUserId, recipientId },
+        { senderId: recipientId, recipientId: currentUserId }
       ]
+    };
+    const include = [
+      { model: User, as: "sender", attributes: ["id", "name"] },
+      { model: User, as: "recipient", attributes: ["id", "name"] }
+    ];
+    // Active and archived rows share the same message shape and IDs. Merge them
+    // before returning so old history stays transparent to the frontend.
+    const [activeMessages, archivedMessages] = await Promise.all([
+      ChatMessage.findAll({ where: conversationWhere, order: [["createdAt", "ASC"], ["id", "ASC"]], include }),
+      ArchivedChatMessage.findAll({ where: conversationWhere, order: [["createdAt", "ASC"], ["id", "ASC"]], include })
+    ]);
+    const messages = [...activeMessages, ...archivedMessages].sort((a, b) => {
+      const timeDiff = new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime();
+      return timeDiff || Number(a.id) - Number(b.id);
     });
     const recipient = await User.findByPk(recipientId, { attributes: ["id", "email"] });
     if (!recipient) return res.status(404).json({ message: "User was not found" });

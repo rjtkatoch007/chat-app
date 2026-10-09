@@ -1,7 +1,7 @@
 const crypto = require("crypto");
 const { Op } = require("sequelize");
 const sequelize = require("../config/database");
-const { User, ChatGroup, GroupMember, GroupMessage } = require("../models");
+const { User, ChatGroup, GroupMember, GroupMessage, ArchivedGroupMessage } = require("../models");
 
 const generateInviteCode = () => crypto.randomBytes(6).toString("base64url").toUpperCase();
 
@@ -92,9 +92,17 @@ const getGroupMessages = async (req, res) => {
     if (!membership) return res.status(403).json({ message: "You are not a member of this group" });
     const group = await ChatGroup.findByPk(groupId, { attributes: ["id", "name", "inviteCode", "createdBy"] });
     if (!group) return res.status(404).json({ message: "Group not found" });
-    const messages = await GroupMessage.findAll({
+    const historyQuery = {
       where: { groupId }, order: [["createdAt", "ASC"], ["id", "ASC"]],
       include: [{ model: User, as: "sender", attributes: ["id", "name"] }]
+    };
+    const [activeMessages, archivedMessages] = await Promise.all([
+      GroupMessage.findAll(historyQuery),
+      ArchivedGroupMessage.findAll(historyQuery)
+    ]);
+    const messages = [...activeMessages, ...archivedMessages].sort((a, b) => {
+      const timeDiff = new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime();
+      return timeDiff || Number(a.id) - Number(b.id);
     });
     res.json({ group, messages: messages.map((m) => ({ id: m.id, groupId: m.groupId, senderId: m.senderId, senderName: m.sender?.name || "Unknown user", message: m.message, mediaUrl: m.mediaKey ? null : (m.mediaUrl || null), mediaKey: m.mediaKey || null, mediaChatType: m.mediaKey ? "group" : null, mediaName: m.mediaName || null, mediaType: m.mediaType || null, mediaSize: m.mediaSize || null, createdAt: m.createdAt })) });
   } catch (error) {

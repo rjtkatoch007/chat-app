@@ -1,7 +1,5 @@
-node_modules/
-.env
-.env.*
-!.env.example
-backend/logs/
-*.log
+**/node_modules/
+backend/.env
+frontend/.env
 .DS_Store
+npm-debug.log*
