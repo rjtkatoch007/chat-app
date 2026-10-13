@@ -267,3 +267,29 @@ a { text-decoration: none; }
 .sent .file-attachment { background: rgba(255,255,255,.5); }
 .media-caption { margin-top:4px; color:#667781; font-size:11px; overflow-wrap:anywhere; }
 .composer-btn:disabled { opacity:.6; cursor:not-allowed; }
+
+
+/* Gemini AI writing assistance */
+.ai-reply-panel, .ai-typing-panel {
+  padding: 8px 16px 10px;
+  background: #f8fafb;
+  border-top: 1px solid var(--border);
+}
+.ai-panel-label { color: var(--muted); font-size: 11px; font-weight: 700; margin-bottom: 6px; }
+.ai-suggestion-list { display: flex; flex-wrap: wrap; gap: 7px; }
+.ai-suggestion {
+  border: 1px solid #b8d9d3;
+  border-radius: 18px;
+  padding: 6px 12px;
+  background: white;
+  color: #075e54;
+  font-size: 12px;
+  cursor: pointer;
+  max-width: 100%;
+  overflow-wrap: anywhere;
+}
+.ai-suggestion:hover { background: #e6f4f1; }
+.ai-toolbar { display:flex; align-items:center; gap:8px; padding:5px 16px; background:#f0f2f5; color:var(--muted); font-size:11px; }
+.ai-toolbar select { border:1px solid var(--border); border-radius:12px; padding:3px 8px; background:white; color:var(--text); font-size:12px; }
+.ai-toolbar span { margin-left:auto; }
+@media (max-width: 700px) { .ai-toolbar span { display:none; } }

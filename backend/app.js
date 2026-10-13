@@ -24,6 +24,7 @@ const groupRoutes =
     require("./routes/groupRoutes");
 const mediaRoutes =
     require("./routes/mediaRoutes");
+const aiRoutes = require("./routes/aiRoutes");
 const models = require("./models");
 const { startArchiveScheduler } = require("./services/messageArchiver");
 
@@ -74,6 +75,8 @@ app.use(
     "/media",
     mediaRoutes
 );
+
+app.use("/ai", aiRoutes);
 
 // Start server
 const startServer = async () => {

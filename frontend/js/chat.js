@@ -6,6 +6,9 @@ const $ = (id) => document.getElementById(id);
 const myName = $("myName"), myEmail = $("myEmail"), myAvatar = $("myAvatar"), contactName = $("contactName"), contactAvatar = $("contactAvatar"), contactStatus = $("contactStatus");
 const messageArea = $("messageArea"), messageForm = $("messageForm"), messageInput = $("messageInput"), sendButton = messageForm.querySelector(".send-btn"), mediaInput = $("mediaInput"), mediaButton = $("mediaButton");
 const emailSearchForm = $("emailSearchForm"), emailSearch = $("emailSearch"), chatList = $("chatList"), logoutButton = $("logoutButton");
+const aiReplyPanel = $("aiReplyPanel"), aiReplySuggestions = $("aiReplySuggestions");
+const aiTypingPanel = $("aiTypingPanel"), aiTypingSuggestions = $("aiTypingSuggestions"), aiStyle = $("aiStyle");
+let aiTypingTimer = null, aiTypingRequestId = 0, aiReplyRequestId = 0;
 let loggedInUser = null, selectedUser = null, selectedGroup = null, selectedRoomId = null, conversationMessages = [], chatSocket = null;
 const recentChats = new Map(), groups = new Map();
 let groupModal, joinModal;
@@ -167,13 +170,104 @@ async function uploadMediaFile(file) {
   }
 }
 
+function recentAiContext() {
+  return conversationMessages.slice(-8).map((m) => ({
+    mine: Number(m.senderId) === Number(loggedInUser?.id),
+    message: m.message || ""
+  })).filter((m) => m.message);
+}
+
+function hideAiReplies() {
+  aiReplyPanel.hidden = true;
+  aiReplySuggestions.replaceChildren();
+}
+
+function renderAiChips(container, panel, values, { appendToDraft = false } = {}) {
+  container.replaceChildren();
+  values.forEach((value) => {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "ai-suggestion";
+    button.textContent = value;
+    button.addEventListener("click", () => {
+      if (appendToDraft) {
+        const draft = messageInput.value;
+        messageInput.value = draft && !/\s$/.test(draft) ? `${draft} ${value}` : `${draft}${value}`;
+        messageInput.focus();
+        hideAiTyping();
+      } else {
+        messageInput.value = value;
+        hideAiReplies();
+        messageInput.focus();
+      }
+    });
+    container.appendChild(button);
+  });
+  panel.hidden = values.length === 0;
+}
+
+function hideAiTyping() {
+  aiTypingPanel.hidden = true;
+  aiTypingSuggestions.replaceChildren();
+}
+
+async function requestAi(mode, text) {
+  return api("/ai/suggestions", {
+    method: "POST",
+    body: JSON.stringify({
+      mode, text, style: aiStyle?.value || "casual",
+      recentMessages: recentAiContext()
+    })
+  });
+}
+
+async function generatePredictiveSuggestions() {
+  const draft = messageInput.value.trim();
+  if (!selectedUser && !selectedGroup) return hideAiTyping();
+  if (draft.length < 3 || !chatSocket?.connected) return hideAiTyping();
+  const requestId = ++aiTypingRequestId;
+  try {
+    const data = await requestAi("predict", draft);
+    if (requestId !== aiTypingRequestId || messageInput.value.trim() !== draft) return;
+    renderAiChips(aiTypingSuggestions, aiTypingPanel, data.suggestions || [], { appendToDraft: true });
+  } catch (error) {
+    // Keep chat usable if Gemini is unavailable; do not show fabricated suggestions.
+    hideAiTyping();
+    if (error.message && !error.message.includes("Gemini could not")) console.debug("AI typing suggestions:", error.message);
+  }
+}
+
+async function generateSmartReplies(incoming) {
+  if (!incoming?.message || Number(incoming.senderId) === Number(loggedInUser?.id)) return;
+  const requestId = ++aiReplyRequestId;
+  hideAiReplies();
+  try {
+    const data = await requestAi("replies", incoming.message);
+    const stillInConversation = selectedUser || selectedGroup;
+    if (requestId !== aiReplyRequestId || !stillInConversation) return;
+    renderAiChips(aiReplySuggestions, aiReplyPanel, data.replies || []);
+  } catch (error) {
+    hideAiReplies();
+    console.debug("AI quick replies unavailable:", error.message);
+  }
+}
+
 function connectSocketIO() {
   chatSocket = io(API_URL, { auth: { token }, reconnection: true, reconnectionAttempts: Infinity });
   chatSocket.on("connect", async () => { try { if (selectedGroup) await joinGroupRoom(selectedGroup); else if (selectedUser) await joinPrivateRoom(selectedUser); } catch (e) { console.error(e); } });
   chatSocket.on("authenticated", ({ user }) => console.log("[Socket.IO] Authenticated", user));
   chatSocket.on("connect_error", (e) => showMessageStatus(`Socket.IO: ${e.message}`, "error"));
-  chatSocket.on("new_message", (incoming) => { if (!addIncomingMessage(incoming, { privateChat: true })) return; recentChats.set(selectedUser.id, { ...selectedUser, lastMessage: incoming }); renderChatList(); renderMessages(); });
-  chatSocket.on("new_group_message", (incoming) => { if (!addIncomingMessage(incoming)) return; renderMessages(); });
+  chatSocket.on("new_message", (incoming) => {
+    if (!addIncomingMessage(incoming, { privateChat: true })) return;
+    if (selectedUser) { recentChats.set(selectedUser.id, { ...selectedUser, lastMessage: incoming }); renderChatList(); }
+    renderMessages();
+    if (Number(incoming.senderId) !== Number(loggedInUser?.id)) generateSmartReplies(incoming);
+  });
+  chatSocket.on("new_group_message", (incoming) => {
+    if (!addIncomingMessage(incoming)) return;
+    renderMessages();
+    if (Number(incoming.senderId) !== Number(loggedInUser?.id)) generateSmartReplies(incoming);
+  });
   chatSocket.on("new_media_message", (incoming) => { if (!addIncomingMessage(incoming, { privateChat: true })) return; recentChats.set(selectedUser.id, { ...selectedUser, lastMessage: incoming }); renderChatList(); renderMessages(); });
   chatSocket.on("new_group_media_message", (incoming) => { if (!addIncomingMessage(incoming)) return; renderMessages(); });
   chatSocket.on("group_member_joined", ({ groupId, userName }) => { if (selectedGroup?.id === groupId) showMessageStatus(`${userName} joined the group`); });
@@ -184,9 +278,19 @@ emailSearchForm.addEventListener("submit", async (event) => { event.preventDefau
 messageForm.addEventListener("submit", (event) => {
   event.preventDefault(); const text = messageInput.value.trim(); if (!text || !chatSocket?.connected) return;
   const eventName = selectedGroup ? "send_group_message" : "send_message"; const payload = selectedGroup ? { groupId: selectedGroup.id, message: text } : { roomId: selectedRoomId, recipientId: selectedUser.id, message: text };
-  chatSocket.emit(eventName, payload, (result) => { if (!result?.success) showMessageStatus(result?.message || "Unable to send message", "error"); else messageInput.value = ""; });
+  chatSocket.emit(eventName, payload, (result) => { if (!result?.success) showMessageStatus(result?.message || "Unable to send message", "error"); else { messageInput.value = ""; hideAiTyping(); } });
 });
-messageInput.addEventListener("input", () => { if (!chatSocket?.connected) return; if (selectedGroup) chatSocket.emit("typing", { groupId: selectedGroup.id, isTyping: messageInput.value.length > 0 }); else if (selectedRoomId) chatSocket.emit("typing", { roomId: selectedRoomId, isTyping: messageInput.value.length > 0 }); });
+messageInput.addEventListener("input", () => {
+  if (chatSocket?.connected) {
+    if (selectedGroup) chatSocket.emit("typing", { groupId: selectedGroup.id, isTyping: messageInput.value.length > 0 });
+    else if (selectedRoomId) chatSocket.emit("typing", { roomId: selectedRoomId, isTyping: messageInput.value.length > 0 });
+  }
+  clearTimeout(aiTypingTimer);
+  aiTypingTimer = setTimeout(generatePredictiveSuggestions, 550);
+});
+aiStyle.addEventListener("change", () => {
+  if (messageInput.value.trim().length >= 3) { clearTimeout(aiTypingTimer); aiTypingTimer = setTimeout(generatePredictiveSuggestions, 100); }
+});
 mediaButton.addEventListener("click", () => mediaInput.click());
 mediaInput.addEventListener("change", () => uploadMediaFile(mediaInput.files?.[0]));
 logoutButton.addEventListener("click", () => handleUnauthorized());

@@ -61,3 +61,35 @@ Review `backend/README_ARCHIVING.md` before enabling scheduled archiving in prod
 - `node_modules/` is intentionally excluded from this ZIP; run `npm install` separately in each folder.
 - Never share or commit `backend/.env`.
 - Database and AWS connectivity cannot be verified without your own credentials and services.
+
+
+## Gemini AI chat suggestions
+
+This version adds Gemini-powered predictive typing and smart replies to the existing private and group chat UI.
+
+### Setup
+
+1. Open a terminal in `backend` and run `npm install` (this installs the `@google/genai` SDK and refreshes the lockfile).
+2. Copy `.env.example` to `.env` if you do not already have your local environment file. Keep your existing database, JWT, and AWS settings.
+3. Add your Gemini API key to `backend/.env`:
+   ```
+   GEMINI_API_KEY=your_gemini_api_key
+   GEMINI_MODEL=gemini-3.8-flash
+   ```
+   Get a key from Google AI Studio: https://aistudio.google.com/app/apikey. Never put this key in frontend JavaScript or commit `.env`.
+4. Start the backend using `npm run dev` from `backend`, then open the frontend the same way you normally do.
+
+### How it works
+
+- **Predictive typing:** after a short pause while typing (at least 3 characters), the frontend calls the authenticated `POST /ai/suggestions` endpoint. Tapping a chip appends the suggested continuation to the draft.
+- **Smart replies:** when a new incoming message is received in the active private or group conversation, the UI asks Gemini for three concise reply options. Tapping one puts it into the composer; the user still presses Send.
+- **Personalization:** the AI tone selector supports Casual, Friendly, Professional, and With emojis.
+- **Context and privacy:** only a short recent-message context and the current draft/incoming message are sent to Gemini. Requests require the existing JWT. Gemini credentials remain on the backend.
+- **Graceful failure:** if Gemini is not configured or unavailable, the chat remains usable and AI chips are hidden. No fake/offline suggestions are shown.
+
+The backend API route is `POST /ai/suggestions` with `{ "mode": "predict" | "replies", "text": "...", "style": "casual", "recentMessages": [] }`.
+
+
+### Gemini model update
+
+AI suggestions use Google’s Interactions API with `gemini-3.8-flash`. Set `GEMINI_API_KEY` and optionally `GEMINI_MODEL=gemini-3.8-flash` in `backend/.env`; never expose the key in frontend files.
